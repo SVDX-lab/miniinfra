@@ -1,0 +1,37 @@
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地配置与凭据
+.env
+.env.*
+!.env.example
+
+# 编辑器与操作系统文件
+.idea/
+.vscode/
+.DS_Store
+
+# 本地实验输出与性能分析文件
+*.local.json
+*.local.csv
+*.local.txt
+*-results.json
+*results.json
+*.log
+*.prof
+*.nsys-rep
+*.sqlite
+
+# 模型与临时产物
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.zip
+*.tar
+*.tar.gz
+tmp/
+temp/

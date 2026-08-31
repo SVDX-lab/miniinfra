@@ -1,0 +1,5 @@
+# 与 requirements.txt 相同；保留该文件用于记录服务器验证时的完整固定版本。
+torch==2.7.1
+huggingface-hub==0.31.4
+safetensors==0.5.3
+regex==2026.7.19

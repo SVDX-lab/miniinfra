@@ -1,0 +1,6 @@
+# 3080 Ti 参考环境的直接依赖版本。CUDA 版 PyTorch 请按运行环境安装。
+torch==2.7.1
+triton==3.3.1
+huggingface-hub==0.31.4
+safetensors==0.5.3
+regex==2026.7.19
