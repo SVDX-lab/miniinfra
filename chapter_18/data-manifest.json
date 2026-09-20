@@ -1,0 +1,15 @@
+{
+  "repo": "jingyaogong/minimind_dataset",
+  "revision": "312afb4f76391145c6902f765bb51691c09a12f5",
+  "file": "sft_t2t_mini.jsonl",
+  "size": 1739201170,
+  "sha256": "abb1e76b2056e14728beb78db96b7b3c491a0bef1ed3e34a9b381b28f29fa518",
+  "selection": "same first 32 plain system/user/assistant records as Chapter 17",
+  "source_lines": [95, 158, 159, 284, 316, 342, 383, 386, 414, 415, 578, 580, 582, 626, 679, 684, 730, 740, 791, 797, 811, 817, 822, 823, 824, 831, 893, 910, 961, 964, 986, 991],
+  "scanned_lines": 991,
+  "non_empty_records": 991,
+  "selected_records": 32,
+  "filtered_records": 959,
+  "filtered_by_reason": {"extra_message_fields": 959},
+  "loss_definition": "Assistant-only labels inherited unchanged from Chapter 17"
+}
