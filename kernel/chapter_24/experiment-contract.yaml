@@ -1,0 +1,111 @@
+# 第 24 期实验合同：DeepSeek MLA——KV 压缩与吸收矩阵
+question: >
+  DeepSeek MLA 的"KV 压缩 + 吸收矩阵"代数改写能否在同一组合成权重下被严格验证
+  （吸收形式与未吸收形式数学等价，§9 新结构规则），其收益能否用"每 Token KV 字节
+  推导 + 两种形式 GEMM 形状/访存/实测延迟对照"兑现，RoPE 段不能被吸收能否用数值
+  实验佐证？
+hypothesis: >
+  吸收形式（W_UK 折进 Q 侧、W_UV 折进输出侧）与未吸收形式在 FP32/FP64 下误差
+  达到机器精度量级；decode 形态下吸收形式把 N 相关的 per-head 小 GEMM（每 Token
+  K/V 投影）换成与 N 无关的每 Query 小 GEMM，使 N 相关 DRAM 流量从 ~18.9 KB/Token
+  降到 1.15 KB/Token（16.5×），实测延迟差距随 KV 长度拉大；MLA 每层每 Token KV
+  字节 = (kv_lora_rank + rope_dim) × dtype_bytes = 1152 B，为同 head_dim MHA
+  (16 头) 的 1/7.11。
+baseline: >
+  未吸收形式参考实现（CPU FP32 torch eager，multi-head 形式 GEMM 序列：
+  latent 投影 → per-head 小 GEMM 物化 K/V → RoPE 段 → softmax attention →
+  输出投影），真值锚点另配 FP64 链。
+variant: >
+  吸收形式：score_nope = (q_nope @ W_UK^T)·c_kv（W_UK 吸收进 Q 侧）、
+  out_h = (Σ_t a_t c_kv_t) @ W_UV（W_UV 吸收进输出侧）；CUDA 侧另有自定义
+  split-K flash-decoding 两 kernel 实现 attention 核（读 latent 直接出加权
+  latent，无 K/V 物化）。
+single_variable: 注意力形式（未吸收 / 吸收），权重、输入、cache、scale 全部同一份。
+invariants:
+  config: DeepSeek-V2-Lite 公开维度（原始字段名与取值，2026-11-21 从 HuggingFace
+    raw config.json 抓取核对）
+  config_source:
+    kv_side: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/raw/main/config.json
+    q_lora_rank: https://huggingface.co/deepseek-ai/DeepSeek-V2/raw/main/config.json
+    softmax_scale: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/raw/main/modeling_deepseek.py
+      (L745: softmax_scale = q_head_dim ** -0.5)
+  config_values:
+    d_model: 2048            # hidden_size（V2-Lite）
+    n_heads: 16              # num_attention_heads（V2-Lite）
+    q_lora_rank: 1536        # 任务书指定；注意 V2-Lite config 为 null（无 Q 低秩），
+                             # 1536 取自 DeepSeek-V2 (full) config——混合口径显式声明
+    kv_lora_rank: 512
+    qk_nope_head_dim: 128
+    qk_rope_head_dim: 64
+    v_head_dim: 128
+    num_hidden_layers: 27    # KV 字节的模型级换算用
+  scale_note: softmax_scale = 1/sqrt(192)（官方 q_head_dim**-0.5）；两种形式共用，
+    等价性结论与 scale 取值无关
+  rope: Llama/HF 半分约定，theta=10000（config rope_theta；YaRa scaling 不做——
+    位置编码细节不影响吸收代数，记录为结构差异）
+  weights: 合成权重 torch.randn 固定 seed × He 缩放（std=1/sqrt(fan_in)）；
+    N(0,1) 会使 softmax 退化为 one-hot（本地开发期实测，见 KNOWN_ISSUES），
+    He 缩放使激活 ~O(1)、score×scale ~O(1)，等价验证全链路非退化
+  scale_declaration: 非完整 V3 128-head 规模（V2-Lite 16 头）；MLA 每 Token KV
+    字节与头数无关可直接外推（roofline_mla.v3_extrapolation：V3 128 头口径
+    MHA 65536 B vs MLA 1152 B = 56.9×），per-head GEMM 的算力/带宽需求随头数
+    线性放大 8×，另行标注
+  truth_dtype: FP64（CPU 未吸收链，代数锚点）+ FP32（CPU 未吸收链，真值锚点）
+  performance_dtype: FP16（CUDA 公共性能路径）
+  fixtures_seed_base: 20260325
+  fixtures: 逐张量 SHA256 manifest（fixtures/manifest.json），两服务器共用同一份
+  correctness_shapes: kv_len ∈ {1, 3, 33, 128, 2048}（N=1 边界 + 非整块 + 长上下文）
+  benchmark_shapes: kv_len ∈ {1, 128, 2048, 32768}（decode 单 query，batch=1）
+  timing: 事件/同步边界校准后统一 Warm-up 与重复次数，报告 P50/P95（ch01 口径）
+  platform_peaks_denominator: chapter_01/performance/results/peak-measurement-cuda.json
+    （拷贝 918.8 GB/s、FP16 GEMM 171.63 TF——口径单源，本期不重测）
+  l2_note: 4090 L2 = 72 MB（ep03 实测）；KV 扫描各点的工作集按 roofline_mla.
+    working_set_note 标注 L2 区/DRAM 区（N=32768 时未吸收核 ~597MB=DRAM 区、
+    吸收核 ~37.7MB=L2 区——两条链带宽达成率分区解读）
+out_of_scope:
+  - Prefill/训练路径（本期只做 decode 单 query 形态）
+  - batch>1、TP 分片、paged KV 管理（第 21 期口径）
+  - 完整 V3 128-head 规模与 YaRa 位置缩放（扩展系数另行标注）
+  - MLA 的 FP8/KV 量化路径
+  - W_UK 折进 W_QB 的"投影合并"作为主链路（仅作等价性延伸对照，
+    benchmark 主链路用两步吸收形式，教学对应"吸收矩阵"）
+  - MUSA 迁移列（本期按排期标记待补，见 implementations/musa/MUSA_TODO.md）
+correctness:
+  - §9 等价对：同一组合成权重、同一份 cache 下 吸收 vs 未吸收 输出对照
+    （max/mean 绝对误差、相对误差、余弦相似度、NaN/Inf 计数、最大误差位置），
+    FP32（CPU/CUDA）与 FP16（CUDA）双口径
+  - FP64 锚点对：未吸收 FP64 链为代数真值；FP64 吸收 vs 未吸收 误差应到
+    FP64 舍入量级（两条不同求和路径，不要求位级相同，记录实际位级状态）
+  - einsum 教学形式 vs bmm/matmul 基准形式互证（FP32，证明计时链与真值链同义）
+  - RoPE 吸收尝试实验：完全吸收尝试（t_ref=pos_q / 缓存中部）的逐位置 score
+    误差、端到端输出损伤（余弦）、合法 q 侧折叠的机器精度一致、FP64 佐证对
+  - latent→rope 线性映射最小二乘（train/test 分半 held-out R²，统计口径见
+    mla_reference.latent_to_rope_linear_map docstring）
+  - 确定性：两形式与自定义核各连续 3 次位级比对
+  - 合同校验：dtype/连续性/维度/N≥1 显式报错（smoke_test S9-S13）
+  - 长上下文 N=32768 核级对照（运行时生成，seed 同 fixtures 规则）
+metrics:
+  - 每 Token KV 字节：MLA 1152 B vs MHA(16头) 8192 B vs GQA-8 4096 B vs MQA 512 B
+    （同 head_dim=128、FP16 口径）+ V3 128 头外推 + 模型级(27 层)换算
+  - 两种形式的 GEMM 形状表（batch/M/K/N/MACs/bytes，roofline_mla 单源）
+  - attention 核理论访存（逐项推导）与延迟下限（/918.8 GB/s）
+  - 实测 P50/P95 延迟：full step 三变体（unabsorbed / absorbed_torch /
+    absorbed_kernel）+ core-only 两变体 + 逐 stage 拆解
+  - 有效带宽与达成率（实测 918.8 分母为主、规格 1008 括注）、bound 分类证据
+    （nsys kernsum + 带宽对账，ncu 受限见 KNOWN_ISSUES）
+  - splits 敏感性小扫描（1 / heuristic / 16 / 64）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB（本期唯一 GPU 列）
+  musa_status: 待补（MUSA_TODO.md；迁移台账本期无新增行——无 MUSA 实测即无
+    新迁移差异，lesson-map 状态行注明）
+gpu_plan:
+  cpu: FP64/FP32 真值、fixtures 生成、RoPE 吸收实验、CPU 延迟对照（本地 12 核）
+  one_gpu_cuda: 自定义核构建 + fixtures 正确性 + KV 长度扫描 + stage 拆解 +
+    nsys 证据 + N=32768 长上下文核对照
+structural_diff_declaration: >
+  与官方 DeepSeek-V2 实现的结构差异（大纲 §9 要求显式声明）：(1) 合成随机权重
+  （He 缩放）替代训练权重；(2) q_a_layernorm / kv_a_layernorm 省略（两形式
+  同构省略，不影响等价性）；(3) 只实现 decode 单 query 形态；(4) q_lora_rank
+  混合口径（V2-Lite 为 null，任务书指定 1536，见 invariants）；(5) rope 用
+  Llama 半分约定（官方同为此约定）；(6) 新 token 的 cache 写回在 benchmark 中
+  建模为"计算 kv_a 投影但不物理 append"（两形式相同处理）。

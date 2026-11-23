@@ -1,0 +1,42 @@
+chapter: "03"
+title: 进程树和取消
+status: implemented
+question: |
+  命令超时后如何清理？
+hypothesis: |
+  只终止主进程会留下孤儿子进程（后台服务继续占端口、进程不归零）；
+  清理整个进程树能在短时间内归零且会话仍可用。若两种清理路径后进程数相同，则假设不成立。
+baseline: |
+  第 02 期粗粒度超时（杀整个容器）作为背景；本期两种清理路径都在
+  "会话保留"的前提下对比。
+variable: |
+  超时时只杀 shell 主进程（main-only，按 PID 文件精确 kill）
+  → 终止会话容器内整个进程树（tree，杀除 PID 1 外全部进程）。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  会话模式: per-session（两种清理路径完全一致）
+  容器基底: |
+    --init（tini 作 PID1，负责收割孤儿/僵尸进程）；主进程 `sleep infinity`
+    （ppid=1）与 tini 同为容器基底，tree 清理与进程清点均显式排除（正解：
+    基底不属任务残留，否则会误杀主进程导致容器退出）。
+  exec包装: 两种模式都用同一 sh 包装记录主进程 PID 到 /tmp/mis_main.pid
+  container_constraints: 与第 01/02 期一致
+workload_manifest:
+  - TREE 派生负载: |
+      主进程 sleep 300（前台）；后台：(while true; do echo hello | nc -l -p 8080; done) &
+      以及 3 个 sleep 300 —— 共 1 个主进程 + ≥5 个后代进程
+correctness_checks:
+  - 两种路径都返回 timed_out 且带清理报告（killed/leftover），不默默报成功
+  - main-only：超时后容器内遗留存活孤儿 >0、8080 端口仍被占用、后续命令可执行
+  - tree：存活进程与僵尸进程双归零（tini 收割）、端口被释放、会话保留可用
+  - 会话 stop 后资源归零
+performance_metrics:
+  - 取消到进程归零的延迟（tree 路径，重复 10 次的 P50/P95）
+  - main-only 的"永不归零"作为对照记录
+fault_injection:
+  - 命令超时（主进程前台长睡眠 + 后台派生树）
+exclusions:
+  - 不做跨容器/宿主侧进程泄漏分析（容器 PID ns 保证）
+  - 不做并发 exec（PID 文件单槽，契约已知限制）
+known_risks:
+  - busybox kill 循环会先杀其他进程再退出自身，报告以其退出码 137 为准

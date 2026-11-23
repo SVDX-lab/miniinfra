@@ -1,0 +1,47 @@
+question: 同一份 RMSNorm 语义和同一份手写 Qwen3-0.6B 推理，能否在 CPU/CUDA/MUSA 三个后端互相校验，并建立一套三平台可比的正确性与性能口径？
+hypothesis: 以 CPU FP32 朴素参考为真值锚点，PyTorch 组合表达式在三个后端都满足合同容差；FP16 公共性能路径下，三后端可以给出可直接对比的延迟与有效带宽口径。
+baseline: Qwen/Qwen3-0.6B 固定 revision 的 FP32 CPU 参考路径（真值锚点）。
+variant: 同一份 PyTorch 程序分别在 cuda 与 musa 后端以 FP16 运行；本期不写任何自定义 Kernel。
+single_variable: PyTorch 执行后端（cpu / cuda / musa）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（内容固定：model.safetensors sha256=f47f71177f32bcd101b7...，完整清单见 models/MANIFEST.json）
+  tokenizer: 模型目录 tokenizer.json，手写 Byte-level BPE 解析
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU 朴素参考实现，真值锚点）
+  performance_dtype: FP16
+  generation: Greedy，Thinking 关闭（non-thinking chat template），固定输出 32 Token
+  fixtures_seed: 20260101
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]
+    rows: [1, 4, 128]
+  benchmark_shapes:
+    rows: [1, 4, 128, 512, 2048]
+    hidden_size: 1024
+  timing: 事件/同步边界校准后统一 Warm-up 与重复次数，报告 P50/P95
+out_of_scope:
+  - 自定义 CUDA/MUSA Kernel（第 03 期起）
+  - Residual Add + RMSNorm 融合（第 04 期）
+  - 算子注册与接回模型（第 05 期）
+  - BF16/FP8 路径（第 06/16 期）
+  - 多卡、训练、Backward
+correctness:
+  - 手算极小 RMSNorm（2×4 硬编码数值）与公式实现对照
+  - FP32/FP16 误差来源量化（同输入双 dtype 对照，确定容差依据）
+  - 30 组合同 Shape 的 FP32 朴素参考 vs PyTorch 组合表达式（CPU）
+  - CUDA/MUSA 后端 vs CPU FP32 真值（fixtures 逐组误差 + NaN/Inf 计数）
+  - 手写 Qwen3 FP32 CPU 真值：逐层抽查探针、首 Token Logits、Greedy 32 Token
+  - CUDA/MUSA FP16 模型真值对照：探针误差、Logits 排序一致、Greedy Token 一致
+  - 相同输入重复运行确定性（每后端连续 3 次位级比对）
+metrics:
+  - 单算子 P50/P95 延迟、有效带宽、相对峰值带宽达成率
+  - 模型 Prefill/Decode 单步时间（三后端同口径）
+  - 峰值显存（cuda/musa）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 48GB + 1×MTT S4000 48GB
+  model_policy: 只使用 Qwen/Qwen3-0.6B 固定 revision
+  correctness_profile: fixtures 全部 18 组正确性 Shape（6 H × 3 rows）
+  common_benchmark_profile: rows={1,4,128,512,2048} × H=1024 的 FP16 RMSNorm 组合表达式
+gpu_plan:
+  cpu: FP32 真值、fixtures 生成、手算例、边界行为（任一机器可做）
+  one_gpu_cuda: RTX 4090 上 CUDA 列 baseline 与模型真值对照
+  one_gpu_musa: MTT S4000 上 MUSA 列 baseline 与模型真值对照

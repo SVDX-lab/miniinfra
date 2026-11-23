@@ -1,0 +1,81 @@
+# 第 02 期实验合同：手写 RMSNorm——访存受限算子的三种组织
+question: 同一 RMSNorm 算法在 CPU 串行、CUDA SIMT（每 block 一行 + warp 归约）、MUSA 同源迁移三种组织下，数值与性能如何互相印证？CUDA 与 MUSA 的 Kernel 代码差在哪几类地方？
+hypothesis: 手写单 Kernel（x 行缓存 shared + 一次读写）的 FP16 有效带宽达成率显著高于第 01 期组合表达式（25.4%）；MUSA 版经机械替换即可编译（同源软件栈），Kernel 本体零改动；bound 分类不因换平台而改变（仍 memory-bound）。
+baseline: 第 01/01 期 PyTorch 组合表达式（同口径重测）+ CPU FP32 朴素串行真值（本期真值锚点）。
+variant: CPU 朴素串行版 / CUDA 手写 Kernel / MUSA 迁移 Kernel，同一语义同一 fixtures。
+single_variable: RMSNorm 实现方式（组织方式：串行循环 / SIMT 归约 / 同源迁移）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（仅 hidden_size=1024 参与 H 集合；本期不做模型级对照）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU 朴素串行实现 naive_rmsnorm_serial，真值锚点）
+  truth_generation: 固定 seed 本地生成 + SHA256 清单，随代码上传两台服务器共用
+  performance_dtype: FP16（主口径）+ FP32（对照）
+  fixtures_seed: 20260301
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]   # 1024 = Qwen3-0.6B hidden_size
+    rows: [1, 4, 128, 512, 2048]
+    combos: 30
+  benchmark_shapes:
+    rows: [1, 4, 128, 512, 2048]
+    hidden_size: 1024
+  tile_scan:
+    tiles: [64, 128, 256, 512, 1024]
+    main_shape: {rows: 2048, hidden_size: 1024, dtype: fp16}
+    spot_check: {hidden_size: [127, 129], rows: 2048, dtype: fp16}
+  timing: 事件对 + 末尾一次同步，统一 Warm-up 与重复次数，报告 P50/P95/mean/min；GPU 另测 Graph Replay 口径，达成率取最优并标注 mode
+  peak_bandwidth:
+    denominator: "第 01 期实测 D2D 拷贝峰值（达成率分母单源，主 agent 指示）"
+    measured: {cuda: 918.8 GB/s, musa: 711.3 GB/s}
+    spec_reference: {cuda: 1008 GB/s, musa: 768 GB/s}   # 大纲 §3.3，另存 achievement_ratio_spec 对照列
+operator_contract:
+  math: "y_i = w_i * x_i / sqrt(mean_j(x_j^2) + eps)；平方和与均值 FP32 累加"
+  input_shape: "[rows, H]，H ∈ [127, 2048]（实测集合见 correctness_shapes），行数任意（grid-stride）"
+  weight_shape: "[H]，与 x 同 dtype"
+  output_shape: "[rows, H]，与 x 同 dtype"
+  stride: "本期 Kernel 合同只接受连续输入（非连续显式报错，第 06 期主题）；CPU 参考接受任意布局"
+  aliasing: "无 aliasing；不修改输入（无原位语义，Residual 融合是第 03 期）"
+  accumulation_dtype: FP32（平方和、均值、rsqrt、归一化与权重乘法均在 FP32，写回时一次舍入到 T）
+  vectorization: "指针 16B 对齐且 H % 向量宽度 == 0 时向量化（FP32: float4，FP16: uint4×8 half）；否则标量回退"
+  tile: "block 维度 = 编译期模板参数 {64,128,256,512,1024}，运行时 dispatch；H > 每线程覆盖量时块内 stride 循环"
+  shared_memory: "x 行缓存（H<=2048，8KB 上限）+ 跨 warp 归约暂存"
+  empty_tensor: "H=0 显式报错；rows=0 返回空 Tensor（不发射 Kernel）"
+  extreme_values: "FP16 输入平方和在 FP32 上不溢出（≤65504^2×H）；FP32 输入 |x|>~1.8e19 时平方和溢出为 +Inf，scale=1/Inf=0，输出全零（与 torch 组合表达式 rsqrt(inf)=0 行为一致，无 NaN/Inf 传播）"
+  nan_semantics: "输入 NaN 按行传播（该行全 NaN，其他行不受影响）"
+  error_behavior: "Shape/dtype/设备/连续性/非法 tile 全部显式报错，无静默回退"
+  determinism: "同 Tile 同 Shape 同输入位级可复现；跨 Tile 归约分组不同，结果可能位级不同（第 07 期主题）"
+  numerical_tolerance: "FP32 Kernel vs 真值 max_abs <= 1e-5（rsqrtf 近似 + 归约顺序）；FP16 Kernel vs 真值 max_abs <= 2e-2（dtype 主导，第 01 期容差依据）"
+performance_model:
+  theoretical_bytes_fp16: "(rows*H*2 + H) 字节（读 x + 写 y + 读 w）"
+  theoretical_bytes_fp32: "(rows*H*2 + H) × 4 字节"
+  latency_lower_bound: "理论字节 / 平台峰值带宽"
+  compute_intensity: "~2 FLOP/元素（乘加各一），远低于任一平台脊点 => memory-bound（Profiler 证据上机采集）"
+out_of_scope:
+  - Residual Add + RMSNorm 融合（第 03 期）
+  - TORCH_LIBRARY 注册与接回模型（第 04 期）
+  - BF16/FP8 路径（第 05/15 期）
+  - 非连续布局（第 06 期）
+  - 原子归约与确定性对照（第 07 期）
+  - 模型级（逐层探针/Logits/Greedy）对照——本期算子级，模型级在第 04 期接回后复验
+correctness:
+  - fixture SHA256 完整性（30 组 × 3 张量）
+  - CPU 串行真值自洽（位级）
+  - 手算例（2×4 硬编码）
+  - composite FP32/FP16 vs 真值（30 组，平台原生路径延续第 01 期口径）
+  - kernel FP32/FP16 vs 真值（30 组）：max/mean 绝对误差、相对误差、余弦相似度、NaN/Inf 计数、最大误差位置
+  - 确定性：同 Tile 3 次位级；跨 Tile 位级差异记录
+  - 边界：全零行、NaN 行、FP16 大数、H=0、rows=0、非连续、非法 tile
+metrics:
+  - Kernel 延迟 P50/P95/mean/min；有效带宽；内存带宽达成率；延迟下限与剩余空间
+  - 组合表达式 baseline 同口径对照（手写收益）
+  - Tile 扫描：最优配置 + 敏感度曲线（含非整 Tile 抽查）
+  - bound 分类与 Profiler 证据（ncu / MUSA 厂商工具；取不到记平台边界）
+  - 编译时间与首次运行时间
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  model_policy: 本期不用模型权重（算子级实验）
+  correctness_profile: 30 组 × {fp32, fp16} × {composite, kernel}
+  common_benchmark_profile: rows={1,4,128,512,2048}×H=1024 的 fp32/fp16 手写 Kernel
+gpu_plan:
+  cpu: 真值锚点 + fixtures 生成 + smoke + 串行数量级（本地/任一机器）
+  one_gpu_cuda: build（nvcc）+ correctness + benchmark + tile 扫描 + ncu 证据
+  one_gpu_musa: build（mcc）+ correctness + benchmark + tile 扫描 + 厂商 Profiler 可用性探测

@@ -1,0 +1,53 @@
+question: 同一个 PyTorch RMSNorm 组合表达式的"快慢"，如何换算成理论下限、达成率与 bound 分类，并用厂商 Profiler 给出证据？CPU/CUDA/MUSA 三平台如何用同一套性能报告模板对齐？
+hypothesis: RMSNorm 组合表达式的计算强度 ≈ 1 FLOP/Byte，远低于两块 GPU 的脊点（约 165/100 FLOP/Byte），是深度 memory-bound；其延迟下限 = 融合理论字节 / 平台峰值带宽；eager 组合链在小 shape 时被 CPU 发射主导（launch-dominated），需要 Graph 回放或纯 GPU 口径才能读出真实执行时间；4090 可用 Nsight Compute 取 DRAM/Memory Throughput 证据，MUSA 侧 profiler 生态存在边界（如实记录）。
+baseline: 第 01 期三后端 RMSNorm Baseline（results/benchmark-results-*.json，P50/P95 与 theoretical_bytes 已冻结）；4090 列本期在新实例（24GB 标准版公版卡）上复测并做漂移校验。
+variant: 同一 PyTorch 程序 × 三后端；本期新增 roofline 口径字段、峰值自测、launch-bound 场景、Profiler 证据链；不写任何自定义 Kernel。
+single_variable: PyTorch 执行后端（cpu / cuda / musa）；roofline 计算与 bound 判定逻辑跨后端共用同一份代码（roofline.py）。
+invariants:
+  measured_object: rmsnorm_reference.composite_rmsnorm_torch（与 ch01 同一份语义，eps=1e-6）
+  performance_dtype: FP16（GPU）/ FP32（CPU）
+  benchmark_shapes:
+    rows: [1, 4, 128, 512, 2048]
+    hidden_size: 1024
+  peak_bandwidth_spec: {cuda: 1008, musa: 768, unit: GB/s}   # 大纲 §3.2/§3.3
+  peak_flops_spec: {cuda_fp16_tensor: 165.2, cuda_fp32: 82.6, musa_fp16_tensor: 100, musa_fp32: 25, unit: TFLOPS}
+  achievement_ratio_primary: 有效带宽 / 规格峰值带宽（与 ch01 可比）
+  latency_lower_bound: theoretical_bytes_fused / 规格峰值带宽
+  timing: 事件对口径（相邻重复发射重叠）+ Graph 回放口径双记，报告 P50/P95
+  launch_bound_scenario:
+    operation: "y = x + 1.0（单 Kernel 逐元素）"
+    elements_ladder: [16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864]
+    classification_rule: "launch_throughput=最小3尺寸 tight 中位数；tight>1.2x 吞吐 → GPU-bound，否则 launch-bound（v2，第 09 期复用契约）"
+    event_floor_finding: "事件对口径在 GPU 排空区有 15-24µs 地板值，小 kernel 纯 GPU 时间需 Graph 回放或 profiler kernel 时长"
+  fixtures_seed: 20260101（seed 规则与 ch01 一致：20260101 + rows*100000 + H）
+  estimation_drill:
+    model: Qwen/Qwen3-0.6B（config.json + model.safetensors 文件系统校核）
+    kv_cache_formula: 2(K+V) x 28层 x 8 KV heads x 128 head_dim x 2B
+    rmsnorm_per_token: 57 次 × 3H×2B
+out_of_scope:
+  - 自定义 CUDA/MUSA Kernel（第 02 期起）
+  - 融合算子（第 03 期）
+  - CUDA Graph 专项优化（第 09 期；本期仅用 Graph 回放做纯 GPU 口径）
+  - dtype 扫描（第 05 期）
+  - 多卡
+correctness:
+  - roofline 公式手算数 vs 代码实现（smoke_test.py）
+  - composite vs NumPy FP32 真值（沿用 ch01 比较口径，sanity 级）
+  - fixtures 内联生成路径与落盘文件位级一致
+metrics:
+  - P50/P95/min 延迟（eager 与 graph 双口径）
+  - 融合/未融合理论字节、理论 FLOPs、计算强度
+  - 有效带宽、带宽达成率（规格峰值为分子分母主口径）、延迟达成率
+  - 平台峰值带宽/算力自测（D2D 拷贝、GEMM）佐证规格
+  - bound 分类（kernel 层 roofline + 发射层 eager vs graph）与证据链
+  - launch-bound 分界（尺寸梯子扫描）
+  - Profiler 指标：4090 用 ncu（DRAM/Memory Throughput %、L1/L2/DRAM 流量、SM 忙碌率）；MUSA 侧尽力而为并记录平台边界
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB（新实例公版卡） + 1×MTT S4000 48GB
+  model_policy: Qwen/Qwen3-0.6B 固定内容（models/MANIFEST.json 哈希）
+  common_benchmark_profile: rows={1,4,128,512,2048} × H=1024 的 FP16 RMSNorm 组合表达式
+  source_compatibility_sample: implementations/{cuda,musa}/ 下测量脚本逐文件 diff 分类（本期为"机械替换"样本）
+gpu_plan:
+  cpu: roofline 公式自检、fixtures 生成、估算题（任一机器可做）
+  one_gpu_cuda: 峰值自测 + baseline 复测 + launch-bound + ncu 证据（优先锁）
+  one_gpu_musa: 峰值自测 + baseline 复核 + launch-bound + profiler 探索 + 设备属性探针

@@ -1,0 +1,33 @@
+chapter: "10"
+title: 环境组合
+status: implemented
+question: |
+  环境如何独立更新？
+hypothesis: |
+  把工具包作为压缩包在每任务内解包，准备成本随任务数线性、升级无重建；
+  作为版本固定的只读层（派生镜像）组合，任务准备为零、升级需一次构建即可全员生效。
+  若两种方式内容 digest 不一致或成本关系相反，则假设不成立。
+baseline: |
+  每任务解包：任务容器启动后 tar 解压 tools_vN.tar.gz 到任务内 /opt/tools。
+variable: |
+  可组合只读层：docker build 一次生成 mis-c10-tools:vN 派生镜像
+  （FROM 固定 digest 的 alpine + COPY 工具包），任务直接以派生镜像启动。
+fixed:
+  base_image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  tools包: tool.sh（打印版本）+ 8MiB 确定性 data.bin（种子固定），tar.gz 打包
+  任务负载: /opt/tools/tool.sh 输出版本 + sha256sum data.bin
+  任务数: 每组 5 个任务；升级 v1→v2 一次
+correctness_checks:
+  - 两组任务的版本输出与 data.bin sha256 与源一致（缓存命中不改变内容）
+  - 解包组：升级后下一个任务解 v2 包输出 v2（0 次镜像重建）
+  - 只读层组：一次 build 后所有任务 0 准备成本输出 v2
+performance_metrics:
+  - 每任务准备时间（解包 vs 0）与 5 任务总准备时间
+  - 升级成本：解包组（每任务再解包）vs 只读层组（1 次 build 耗时）
+  - 写入量：解包组 N×8MiB 任务内写入 vs 只读层组一次性镜像层（inspect 差值）
+fault_injection: 无（本期变量是环境组织方式）
+exclusions:
+  - 不实现 EROFS/3FS/按需块加载（教学用 OCI 层+bind 思想；DSec 方案在 field-map 讨论）
+  - 不测并发 build 缓存竞争
+known_risks:
+  - build 时间包含 docker 的层缓存检查；升级 build 用全新内容确保不是 no-op

@@ -1,0 +1,44 @@
+chapter: "07"
+title: 凭据与外部操作
+status: implemented
+question: |
+  Agent 如何使用外部凭据？
+hypothesis: |
+  把静态 Token 注入沙箱后 Agent 可直接读出（泄露面=沙箱内全部进程）；
+  改为边界外受控代理后：沙箱环境与文件系统中找不到长期凭据、
+  只能执行允许清单内的资源+动作、越权请求被拒且留下审计记录。
+  若代理组凭据可读或越权成功，则假设不成立。
+baseline: |
+  沙箱内静态凭据：会话容器注入环境变量 TEST_TOKEN，直连假 API。
+variable: |
+  边界外受控代理：沙箱只见代理地址；代理持有 Token，
+  按 (resource, verb) 允许清单转发，全部请求写审计日志。
+fixed:
+  image_sandbox: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  image_services: python:3.12-alpine@sha256:0687a6bc9716edc2a6ee0fbfb0f87e7ee358b262b67c9215de91bc9b2d38ba71
+  topology: 与第 06 期同构（egress 网 + internal 网 + dual-homed 代理）
+  凭据: 全部为本课程生成的假 Token（SECRET_TOKEN_…/ADMIN_TOKEN_…），不涉及真实凭据
+  allowlist: |
+    允许：GET /secret/report
+    拒绝：GET /secret/payroll、POST /admin/delete（默认拒绝）
+workload_manifest:
+  - C1 读环境: env | grep -i token（两组）
+  - C2 找文件: grep -rl TOKEN / 2>/dev/null（B 组应无结果）
+  - C3 允许操作: GET /secret/report（B 组经代理；A 组直连）
+  - C4 越权-资源: GET /secret/payroll
+  - C5 越权-动作: POST /admin/delete
+correctness_checks:
+  - A 组：TEST_TOKEN 出现在 env（暴露演示）
+  - B 组：env 与文件系统均无 Token
+  - B 组：C3 成功；C4/C5 被拒（403 + 拒绝原因）
+  - 审计日志包含 C3/C4/C5 三条记录（会话、动作、允许/拒绝、UTC 时间）
+performance_metrics:
+  - 授权路径延迟：B 组经代理 vs A 组直连
+fault_injection:
+  - 越权资源访问
+  - 越权动作调用
+exclusions:
+  - 不做 Token 轮换/TTL、mTLS、细粒度作用域（生产议题）
+  - 不处理浏览器/Cookie 场景
+known_risks:
+  - 代理成为单点：其可用性与审计日志完整性属于可信控制面责任

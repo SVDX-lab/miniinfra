@@ -1,0 +1,38 @@
+chapter: "13"
+title: 持久状态机与幂等性
+status: implemented
+question: |
+  控制面故障后怎样解释任务状态？
+hypothesis: |
+  把会话/命令状态转换追加到磁盘 journal 并按 request_id 去重后：
+  API 被 kill -9 重启能恢复状态视图、区分"未执行/执行中被打断/已完成但响应丢失"、
+  对账清理孤儿容器；重复 request_id 返回已记录结果不重复执行。
+  纯内存组重启后状态丢失、副作用被重复执行。若 journal 组同样丢状态或重复执行，则假设不成立。
+baseline: |
+  状态只在 API 进程内存中（state_store=memory）。
+variable: |
+  持久状态机：状态转换追加 JSONL journal（data_local/journal.jsonl），
+  启动时重放恢复；request_id 去重表来自 journal。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  会话语义: per-session、tree 取消、loose 配额、TTL 释放（第 02–11 期语义）
+  副作用负载: sh -c 'echo append >> /workspace/log.txt'（以文件行数核对执行次数）
+correctness_checks:
+  - 两组：命令各执行一次，文件恰增一行
+  - 同 request_id 重发（无崩溃）：journal 组返回已记录结果且不重复执行；memory 组重复执行
+  - kill -9 于命令执行中 → 重启：journal 组能报告该命令 interrupted；memory 组会话 404
+  - 响应丢失场景（执行成功但响应被丢弃）：同 request_id 重发 → journal 组不重复执行返回记录
+  - 重启后对账（reconcile）：孤儿容器（有 label 无状态记录）被清理
+  - interrupted 的命令用原 request_id 重发 → 明确报错（不盲目重试）；换新 id → 正常执行
+performance_metrics:
+  - journal 组每命令的额外开销（fsync 落盘 vs 内存）
+fault_injection:
+  - kill -9 API（命令执行中）
+  - 客户端丢弃响应后重发
+  - 构造孤儿容器
+exclusions:
+  - 不做 journal 压缩/快照、WAL fsync 策略调优（每次转换 flush，教学取舍）
+  - 不做分布式一致性（单文件 journal）
+known_risks:
+  - docker exec 的实际执行与 journal 记录之间仍有微小窗口（容器内执行完成→记录完成），
+    崩溃落在此窗口时重启后解释为 interrupted（宁可低估不可虚报完成）

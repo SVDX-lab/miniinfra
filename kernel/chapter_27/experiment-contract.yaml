@@ -1,0 +1,98 @@
+# 第 27 期实验合同：Gated DeltaNet 线性注意力——递推形式与分块并行形式
+
+question: >
+  线性注意力用"固定大小递推状态"替换"随序列增长的 KV Cache"——这一结构级
+  访存改造能否按 §9 新结构规则严格验证（分块并行形式与逐 Token 递推形式在同
+  权重同输入下数学等价，FP64 达机器精度）？两形式的延迟与状态访存量差距有多
+  大（CPU 列实测 + 结构串行深度口径）？状态大小（与序列长度解耦）vs KV Cache
+  （随序列线性增长）的访存曲线在 N ∈ {512,2048,8192,32768} 上比值多少？门控
+  （恒定衰减 vs 数据依赖门控）对状态保持/遗忘的行为差异如何量化？三条"压缩
+  KV"路线（ch22 分页 / ch26 稀疏化 / ch28 线性状态）并置的对照结论是什么？
+
+hypothesis: >
+  chunked 与递推在 FP64 下 ~1e-13 相对误差（机器精度等价，不同求和序）；
+  FP32 ~1e-6；fp16-io（FLA 核口径）~1e-3 且全程 fp16 状态回路发散（delta
+  规则灾难性消除）；CPU 延迟 chunked/递推 ≈ 1/5（op 数量级差）；访存曲线
+  交叉点 N*=128 token/层（512KB 状态 vs 4KB/token KV），N=32768 时 decode
+  读流量比 250×、prefill 读流量比 2.3e3×；门控率 α 直接决定记忆深度
+  （retention ≈ β·α^D，α=0.819 时 D=64 只剩 2.5%），per-head 门控使记忆
+  深度特化（ᾱ ∈ [0.54, 0.99] ⇒ horizon 2.2~114 token）。
+
+baseline: >
+  逐 Token 递推形式（FLA naive_recurrent_gated_delta_rule 同构，CPU FP32
+  主链 + FP64 代数锚点）；chunked 形式（FLA naive_chunk_gated_delta_rule
+  同构并推广到 per-K-通道向量门控）。
+
+variant: >
+  单变量 = 计算形式（递推 vs chunked）。权重/输入/门控/状态初始化全部同一份
+  （固定 seed）；B ∈ {16,32,64} 块大小扫描；dtype ∈ {fp64 锚点, fp32 主链,
+  fp16io 记录容差}；gate ∈ {scalar per-head（Qwen3-Next/FLA GDN 公开口径）,
+  vector per-K-通道（Kimi Linear KDA 公开存在性 + 合成投影实现）}。
+
+invariants:
+  config: Qwen3-Next-80B-A3B-Instruct 线性注意力层公开维度（合成权重的
+    "Qwen3 量级"口径）；门控初始化 = FLA GatedDeltaNet 层公开代码口径
+  config_source:
+    qwen3next: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/main/config.json
+      （hidden_size=2048, linear_num_key_heads=16, linear_num_value_heads=32,
+      linear_key_head_dim=128, linear_value_head_dim=128, num_hidden_layers=48,
+      linear_conv_kernel_dim=4；抓取 2026-11-21）
+    fla_layer: https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/gated_deltanet.py
+      （hidden_size=2048, expand_v=2, head_dim=256, num_heads=6 默认；A=
+      uniform(0,16)→A_log、dt∈[0.001,0.1] inverse-softplus→dt_bias；门控式
+      g = −exp(A_log)·softplus(g_raw+dt_bias)；beta=sigmoid(b_proj(x))；
+      use_qk_l2norm_in_kernel=True；抓取 2026-11-21）
+    fla_naive: https://github.com/fla-org/flash-linear-attention/blob/main/fla/ops/gated_delta_rule/naive.py
+      （naive_recurrent_gated_delta_rule 逐行同构 + naive_chunk_gated_delta_rule
+      chunk_size=64、scale=1/sqrt(K)；抓取 2026-11-21）
+    kda_perdim: https://arxiv.org/abs/2510.26692（Kimi Linear KDA：per-K-通道
+      细粒度衰减门控——vector 变体公开存在性出处）
+  config_values:
+    d_model: 2048
+    num_key_heads: 16
+    num_value_heads: 16        # Qwen3-Next 为 32（GVA 分组）；HV=H 简化声明
+    head_k_dim: 128
+    head_v_dim: 128
+    num_layers: 48             # 模型级外推用
+    scale: 1/sqrt(128)         # FLA naive 默认
+  synthetic_declarations:
+    - "q/k L2 归一化：FLA 层默认 use_qk_l2norm_in_kernel=True——这不是装饰，
+       是 delta 规则收缩条件 β‖k‖²≤β<1 的来源；未归一的合成 k（‖k‖²≈128）
+       使精确算术下也发散（本期实测，见 EXPERIMENT_LOG §5）"
+    - "省略 short conv（conv_size=4）、输出门控 g_proj/RMSNormGated——逐元素/
+       逐头包装层，与两形式等价性正交；GVA 32-V-头分组简化为 HV=H"
+    - "vector（per-K-通道）门控的投影实现为合成低秩结构（R=64，W_A[2048,64]
+       ×W_B[64,2048]），通道级 A_log=初始 uniform(0,16)——KDA 论文未公开
+       逐行实现，按合成设定"
+    - "检索深度探针为受控注入（k_p=e_r 基向量、H=1 专用口径），测门控-记忆
+       深度形态，不主张真实语言任务的检索质量"
+  weights: 合成权重 torch.randn 固定 seed × He 缩放（fan_in=shape[0]，ep26
+    同法；门控 A_log/dt_bias 按 FLA 层初始化口径）
+  truth_dtype: FP64（CPU 递推，代数锚点）+ FP32（CPU 主链，真值锚点）
+  performance_dtype: FP32（CPU 列主口径；fp16io 记录容差）
+  fixtures_seed_base: 20260328
+  fixtures: correctness.npz（92 张量：每 (variant,N) 的递推 FP32/FP64 真值 +
+    chunked B=64 值透明性真值 + initial_state≠0 情形）+ manifest 逐张量
+    SHA256；权重/x 不进 npz（纯 seed 重建 + weights_sha256 对拍）；
+    verify-only 容差 FP64<1e-10 / FP32<2e-4（跨 torch 版本 GEMM 舍入）
+  correctness_shapes: N ∈ {1, 3, 33, 127, 128, 2048}（含非整块 3/33/127）；
+    B ∈ {16, 32, 64}；gate ∈ {scalar, vector}；initial_state ≠ 0 单列
+  benchmark_shapes: 延迟 N ∈ {512, 2048}（两形式）+ {8192, 32768}（chunked，
+    递推秒级/分钟级单列降重复）；访存曲线 N ∈ {512, 2048, 8192, 32768}
+  timing: ch01 口径（P50/P95，CPU perf_counter）；CPU warmup=2 repeats=5
+    （N=8192/32768 的长任务降为 warmup=1 repeats=3 并在结果标注）；
+    MUSA 列事件对计时 warmup=3 repeats=10
+  memory_accounting: ch22 capacity_accounting 同口径（确定性整数核算）：
+    KV 字节/token/层 = 2×HKV×D×dtype_bytes（Qwen3-0.6B GQA HKV=8,D=128 ⇒
+    4KB fp16）；线性状态字节/层 = H×K×V×dtype_bytes（=512KB fp16，与 N 无关）
+  serial_depth_definition: 递推 = T 步（每步 4 次小算子）；chunked =
+    (C−1) 步 UT 前向替换 + NC 步 carry + NC 步块内构造/输出（每步批量矩阵
+    算子；K1/块内构造在 (H,NC) 维完全并行）
+  determinism: 无 atomics；fp32 主链 3 次连跑位级一致（chunked 与递推分别验证）
+  platform_peaks_denominator: chapter_01/performance/results/peak-measurement-cuda.json
+    （CUDA 列回填时使用；CPU 列只报 wall-clock 与串行深度结构口径）
+  out_of_scope: 训练侧反向（dq/dk/dv），GVA 32-V-头完整口径（HV=H 简化 +
+    GVA 展开列为后续可选，CUDA 回填未做——q/k 复制展开不影响等价性结论），
+    CUDA 向量门控核（CUDA 列实现标量门控主线=Qwen3-Next 公开口径；vector
+    变体等价性由 CPU 列覆盖），MUSA 自定义核（可选列为 torch_musa eager
+    复验）；CUDA 列已于 2026-11-21/22 回填完成（38/38 + 实测 + nsys 分相位）

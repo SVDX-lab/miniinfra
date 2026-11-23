@@ -1,0 +1,188 @@
+{
+  "A_naive_fp32": {
+    "shape": [
+      16,
+      32
+    ],
+    "dtype": "float32",
+    "sha256": "ee42adcaa7c0f851613f8115e675850c55105bfffc2af8309727ac48b19d2326"
+  },
+  "A_naive_fp64": {
+    "shape": [
+      16,
+      32
+    ],
+    "dtype": "float64",
+    "sha256": "92195f5e913baf096e40b58c2f5922c5d3c47735d5ada60816e730d7b5d12149"
+  },
+  "A_idx": {
+    "shape": [
+      16,
+      2
+    ],
+    "dtype": "int64",
+    "sha256": "c1e0301be6a36cc6b821a68136c6686d0ff88085924d644580f9e110cde83942"
+  },
+  "A_w": {
+    "shape": [
+      16,
+      2
+    ],
+    "dtype": "float32",
+    "sha256": "eba0212452792c6d74acdb99b2892293789697b51bbd6b9a5efbf8625f551140"
+  },
+  "B_naive_fp32": {
+    "shape": [
+      64,
+      64
+    ],
+    "dtype": "float32",
+    "sha256": "b50b388da1961f821546d05db56b8abb8b6ba6c879f36e0a58f31035d67119a8"
+  },
+  "B_naive_fp64": {
+    "shape": [
+      64,
+      64
+    ],
+    "dtype": "float64",
+    "sha256": "bfe8c96a5d32b89d75743ded34ae84577c2383a59a2ce588be1a0e017ce7b18f"
+  },
+  "B_idx": {
+    "shape": [
+      64,
+      6
+    ],
+    "dtype": "int64",
+    "sha256": "c685067ce38a0549ae21da5038e911db8a97e172b4a6e2898cd55fe2aee67444"
+  },
+  "B_w": {
+    "shape": [
+      64,
+      6
+    ],
+    "dtype": "float32",
+    "sha256": "f7af54616333b2eadb11c02c611b44e93dd2fb266dab90d11013ff70008413eb"
+  },
+  "C_naive_fp32": {
+    "shape": [
+      64,
+      64
+    ],
+    "dtype": "float32",
+    "sha256": "150d6a428e658e80d5d7b865d2482e96cb0c19441d93681ad4da971200672af3"
+  },
+  "C_naive_fp64": {
+    "shape": [
+      64,
+      64
+    ],
+    "dtype": "float64",
+    "sha256": "27d5bc94a8630636246032bbfd204de61e1746983fce5808e5fb06da1d00073b"
+  },
+  "C_idx": {
+    "shape": [
+      64,
+      6
+    ],
+    "dtype": "int64",
+    "sha256": "f011490eec4e688b69a4a97c2823c630c0e37ddea1b45024a50820728c604a75"
+  },
+  "C_w": {
+    "shape": [
+      64,
+      6
+    ],
+    "dtype": "float32",
+    "sha256": "9cddb054c244016b7c3f85e9f6f1d88c4bd6d7fa359ac29825a58b6dc83b00a6"
+  },
+  "C_counts": {
+    "shape": [
+      16
+    ],
+    "dtype": "int64",
+    "sha256": "c16517ef3dc5deb15ff2c0d385985522d2499c0226a2eb2c2fe3534a88c3aa57"
+  },
+  "C_stats_hotshare": {
+    "shape": [
+      2
+    ],
+    "dtype": "float32",
+    "sha256": "519fc5864bb786c7442d1b195ba0417976a247799fb7cac7ed8ba1fb6038ea97"
+  },
+  "D_naive_fp32": {
+    "shape": [
+      8,
+      32
+    ],
+    "dtype": "float32",
+    "sha256": "a93633ec238bd2f80df19bf46a7409e327c30bab5ddeb45c882a00f9c5da23ee"
+  },
+  "D_idx": {
+    "shape": [
+      8,
+      3
+    ],
+    "dtype": "int64",
+    "sha256": "59ad148ce8b6fcc44d485a5b17e15f549df1ba065e815d00920f761d48213a74"
+  },
+  "D_w": {
+    "shape": [
+      8,
+      3
+    ],
+    "dtype": "float32",
+    "sha256": "dc063372177505b19079119deb6ef57da2a50e2baf109af1ba0360b6b18af8de"
+  },
+  "D_expected_idx": {
+    "shape": [
+      8,
+      3
+    ],
+    "dtype": "int64",
+    "sha256": "59ad148ce8b6fcc44d485a5b17e15f549df1ba065e815d00920f761d48213a74"
+  },
+  "E_naive_fp32": {
+    "shape": [
+      4,
+      2048
+    ],
+    "dtype": "float32",
+    "sha256": "fd7dc7eec4232670911c93d8955937b889b9915903cec7f53bb48ca8378e7367"
+  },
+  "E_idx": {
+    "shape": [
+      4,
+      6
+    ],
+    "dtype": "int64",
+    "sha256": "ff25c5adfb34f7c283e8b3be71fa1c61468034a39b68497b8fe216aeed2da884"
+  },
+  "E_w": {
+    "shape": [
+      4,
+      6
+    ],
+    "dtype": "float32",
+    "sha256": "18c9ab884b4518b0e0cf32c842ee9263bcad3c2a795e95926f1a2e4d326d21fb"
+  },
+  "E_naive_fp64": {
+    "shape": [
+      4,
+      2048
+    ],
+    "dtype": "float64",
+    "sha256": "60eb8098f0674657d3ea061be8d8d678166e9508e24e26b8f881e8549f3f4d3a"
+  },
+  "__meta__": {
+    "created_at_utc": "2026-11-21T10:12:03.237422+00:00",
+    "seed_base": 20260329,
+    "torch": "2.6.0+cpu",
+    "cases": {
+      "A_tiny": "d=32,d_ff=64,E=8,k=2,N=16 seed=20260329",
+      "B_mid": "d=64,d_ff=128,E=16,k=6,N=64 seed=20260400",
+      "C_zipf": "同B + make_zipf_selection(seed=20260450, hot=20%, token=80%, alpha=1)",
+      "D_tie": "d=32,d_ff=64,E=8,k=3,N=8 全同分数 seed=20260500",
+      "E_real": "V2-Lite dims d=2048,d_ff=1408,E=64,k=6,N=4 seed=20260550"
+    }
+  }
+}

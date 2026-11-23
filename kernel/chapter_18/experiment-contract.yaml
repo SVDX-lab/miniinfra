@@ -1,0 +1,48 @@
+question: 算法与 tiling 完全不变、只把计算单元从"逐条 FMA"换成 WMMA fragment（16×16×16，FP16 输入 + FP32/FP16 累加）后，三平台的算力利用率/达成率/roofline 位置怎么变？MUSA S4000 的对应 MMA 编程接口是否存在（§14 准入第 10 条"待实机确认"项）？
+hypothesis:
+  - 4090 上 WMMA 版 FP16 应接近 Tensor Core 红线的量级（朴素 CUDA Core 版 16.1 TF → WMMA 预期 ≥60 TF，同形状厂商库 61.7 TF 为参照），达成率从规格 9.8% 跳到 ≥35%；
+  - roofline bound 分类不翻转：FP16 AI=341.3 FLOP/B 高于 Tensor Core 脊点（cuda 164 / musa 130 FLOP/B），Tensor Core 只把脊点上移、不改变 GEMM 在 compute 侧的位置；
+  - 寄存器占用：fragment（a/b 各 4 regs + acc 8 regs fp32）使 WMMA kernel 的每线程寄存器数远低于朴素版（72-128），占用率不再是瓶颈；
+  - FP16 累加的误差随 K 增长显著大于 FP32 累加（1024³ 时 fp16-acc 误差 ~0.5 量级 vs fp32-acc ~1e-3）——第 05 期"FP32 累加"结论的 GEMM 实证；
+  - S4000 MMA 接口：SDK 5.2.0 头文件树若无 wmma/fragment 对应物则记平台边界（大纲预留的答案路径），否则给出首个可用的 MUSA Tensor Core 编程接口证据。
+baseline: 第 17 期朴素 tiled GEMM（同源二进制内重跑，同会话同口径对照）+ torch.matmul 同会话重测（分母含形状效率）+ ch02 实测峰（171.63/64.55 TF@4096³）。
+variant: 同一 GEMM 的计算单元（CUDA Core 逐条 FMA ↔ WMMA fragment MMA）；tile/形状/计时口径/CLI 全部不变（第 17 期接口约定兑现）。
+single_variable: 计算单元（WMMA vs 朴素 tiled）；辅变量 = 累加 dtype（fp32/fp16）。
+invariants:
+  episode_note: 无 CPU 列（期首声明：Tensor Core 是 GPU 专属计算单元；CPU 侧参照即第 17 期朴素实现）
+  fixtures: 与第 17 期同一份真值（同 seed 重生成 + 50 张量 SHA256 逐一对拍一致，单源不分叉）
+  gemm_semantics: C[M,N] = A[M,K]·B[K,N]，行主序
+  wmma_inputs: FP16 输入 + FP32 累加（--acc fp32 默认，第 05 期结论口径）/ FP16 累加（--acc fp16，精度对照）
+  wmma_mapping: 同 TILE_M/TILE_N（wm16x16…wm64x64）；TILE_K=8 → k-step 16（wm16 映射，2 个 k-fragment）；warp=(TM/16)×(TN/16)，每 warp 1 个累加 fragment
+  wmma_output: FP16 输出（经 smem 暂存换出，天然提供 ragged guard）
+  shapes: 方阵 {256, 512, 1024}（与第 17 期同形状同口径）
+  timing: 与第 17 期完全一致（二进制事件对 + OperatorTimer 事件对；warmup=10，repeats 100/50/30）
+  peaks_denominator: 同会话厂商库重测（形状效率分母）+ ch02 实测峰（171.63/64.55 TF@4096³）+ 规格（165.2/100 TF）
+  musa_l2_fact: S4000 L2=24MB（chapter_02 C-API 实测 musaDeviceProp.l2CacheSize=25165824）——用于 epilogue traffic probe 的容量/效率归因分离
+  musa_mma_admission: §14 准入第 10 条——MMA 接口缺失记平台边界，最小复现存 mma_probe/
+out_of_scope:
+  - epilogue 融合（WMMA 侧只做 gemm_only；融合对照见第 17 期朴素版）
+  - cp.async/双缓冲流水（第 19 期）
+  - 多 fragment/warp 深度分块（每 warp 1 fragment 的最简布局）
+  - TF32 WMMA（fp32 输入路径）
+  - FP16 累加的逐层误差传播分析（模型级，第 05 期已覆盖）
+correctness:
+  - WMMA 8 组形状 × 3 tile × 2 累加 dtype vs CPU FP32 真值（精度对照主数据）
+  - 朴素版同会话抽查（3 形状，与第 17 期数字对照验证同源）
+  - 确定性：wm64x64 fp32-acc 512³ × 3 次位级一致
+  - 二进制 selftest（3 形状 × 5 tile × 2 acc，含 ragged guard 路径）
+metrics:
+  - WMMA/朴素 P50 与有效 TFLOPS（同 tile 对照）
+  - 达成率：规格峰（165.2/100 TF）、ch02 实测峰（171.63/64.55 TF）、同形状厂商库三口径
+  - fragment/寄存器占用（--resource-usage + gpuFuncGetAttributes/musaFuncGetAttributes）
+  - roofline 位置变化（bound 分类是否翻转）
+  - FP16 vs FP32 累加误差谱（对 CPU FP32 真值）
+  - MUSA MMA 接口探测三候选结论（头文件 grep + 最小程序编译）
+  - epilogue traffic probe（sep2 额外读写的 L2/DRAM 归因，回填 ep18 未决 2）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  correctness_profile: fixtures 8 组 × 3 tile × 2 acc（WMMA）+ 3 形状朴素抽查
+  common_benchmark_profile: 方阵 {256,512,1024} × 5 WMMA tile × acc=fp32（+1024³ acc=fp16）；朴素版 11 配置同会话重跑
+gpu_plan:
+  one_gpu_cuda: nvcc 构建（WMMA 全量）+ selftest + 正确性 + WMMA/朴素同会话扫描 + 精度对照 + nsys（WMMA kernel 时长）
+  one_gpu_musa: mma_probe 三候选探测 + 同源编译回退链 + （若可用）MUSA MMA 扫描；（若不可用）朴素版回退编译 + 平台边界记录

@@ -1,0 +1,606 @@
+{
+  "schema_version": "kernel-chapter21.fixtures.v1",
+  "seed_base": 20261121,
+  "rng": "numpy default_rng(PCG64)，standard_normal，FP32 存储；输入 N(0,1)：softmax scale=1/sqrt(128) 已把分数压回 O(1)，softmax 非退化（ch25 教训的 Attention 本体版，无需 He 缩放）",
+  "config": {
+    "hq": 16,
+    "hkv": 8,
+    "d": 128,
+    "scale": 0.08838834764831845,
+    "layers": 28
+  },
+  "tensors": {
+    "p_s64_b1_q": {
+      "sha256": "030c8bfdbf6563acf5a4438294547d99e9c298daf651b7519e7bdb45919af369",
+      "shape": [
+        1,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b1_k": {
+      "sha256": "2d5170d8abff6ecb1d7bc7d10c69d6c53cc18640165c4da98b8011dc8e222375",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b1_v": {
+      "sha256": "ba8e6bbbc7194e1a3ea1d42f51b811e2fcb0f16cbac57cce00da1cab3ac6d563",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b1_truth32": {
+      "sha256": "d60d7aa8b5b38896e7680be728cbb3147e3675bd0dead56bf1a0936c5d03a4a0",
+      "shape": [
+        1,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b1_truth64": {
+      "sha256": "38a0874f7282a413271948903c182c62741c716f8dcf9882c38caf4ab8928db8",
+      "shape": [
+        1,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b4_q": {
+      "sha256": "0e149b77b533047f8dcc986b83d7b6feac8b624173887f4acfd7751a42e8e84f",
+      "shape": [
+        4,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b4_k": {
+      "sha256": "971a968b07d9f8f3795041fc3d88ec63b82ff584cca743938b2929bed0b3070d",
+      "shape": [
+        4,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b4_v": {
+      "sha256": "f62130a0fc08f985e874d46bea4ec6a5ff2325843143fc2f43e00b70625ab34b",
+      "shape": [
+        4,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b4_truth32": {
+      "sha256": "b3d18e387993d8821fc692b449e51454de38b8689b4f1d58d082ca7297c82bc2",
+      "shape": [
+        4,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s64_b4_truth64": {
+      "sha256": "129723c12689f427502a4dcb9c6e63ef9c4bb3a332db52172bee2197609c288e",
+      "shape": [
+        4,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b1_q": {
+      "sha256": "49971a72ee76cc781c3df35ad4f35d4ee5120c5ad6f607cfc96ca2f35c72cd2d",
+      "shape": [
+        1,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b1_k": {
+      "sha256": "652b8bafa5c297c20075ac7ce3f82c55c1c363ea710ed0f0817f307b147f6924",
+      "shape": [
+        1,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b1_v": {
+      "sha256": "2f595591431f605a452ae2e792b57243f8d0439a472289780325a923d8ea20af",
+      "shape": [
+        1,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b1_truth32": {
+      "sha256": "07a4d635fbe3f90b9ce3c01c22258040c3d4014696070e4999dc6b2754e2ecc9",
+      "shape": [
+        1,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b1_truth64": {
+      "sha256": "13f85733d63c855ee6ca93384461b53928089c1c0ade64cbd58d970c5b04f594",
+      "shape": [
+        1,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b4_q": {
+      "sha256": "abe9f9b2c74fef1ca9077fa9b6b425e29f9336a3b9f459bc8000efb8b55fb1be",
+      "shape": [
+        4,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b4_k": {
+      "sha256": "8992287a98faec901beeb13b1edd27ecc8cbca1b4e4c6242d50f02dd27dba330",
+      "shape": [
+        4,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b4_v": {
+      "sha256": "3d1a99edcaea41562898df0ccf913e7044a1841d6e53e61e18046b3122a70fee",
+      "shape": [
+        4,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b4_truth32": {
+      "sha256": "0cf1f48fa6b9d7ead736361caf3b66581558d4a7ea68a2387de91b67c3877968",
+      "shape": [
+        4,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s512_b4_truth64": {
+      "sha256": "980c12bcb7f501e32b160848b137f102e31de41e0cc6e3801ad949fab9087c6c",
+      "shape": [
+        4,
+        16,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b1_q": {
+      "sha256": "1668ffdfb32ad4c1f5f4108a3fac10e7cb522590f50dbb7413f64177785a1a56",
+      "shape": [
+        1,
+        16,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b1_k": {
+      "sha256": "7332bc9207f3a261bfa6cd652630f9ecaa4124c587cf911b1718ead45bb0479c",
+      "shape": [
+        1,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b1_v": {
+      "sha256": "f7e2bf41790c8ebac929d12b36ddbd134511eeabc21b5c3cbc466f9212a0a936",
+      "shape": [
+        1,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b1_truth32": {
+      "sha256": "122bc778fefecb0e7c915ba44d2336d942bf6ab9bbac758c9d531a28c6193de8",
+      "shape": [
+        1,
+        16,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b4_q": {
+      "sha256": "9c8a0ba2cafd7d60e6e1dadb9595b4697040e0365f5616d90f6768021d83bf99",
+      "shape": [
+        4,
+        16,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b4_k": {
+      "sha256": "578ec87756e7504309988e1080d79c32cd2374f26d8cc3dade4cbcfeea5b70e6",
+      "shape": [
+        4,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b4_v": {
+      "sha256": "c6f482018c6028e0c22ff0622fa790e659c9877d14bc74e2901f55c13b6c9894",
+      "shape": [
+        4,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "p_s2048_b4_truth32": {
+      "sha256": "1732229b2ace3573d45bd502f4f4b2be19bcb8ecb03e49fec97ec14e35542884",
+      "shape": [
+        4,
+        16,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b1_q": {
+      "sha256": "42837f4ac7e3759d74262b4d0fb4e032de132fa279d81b399e509fd4a9747adf",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b1_k": {
+      "sha256": "ab02cd78f957fed202bced9b0bc4da6e95cef3485ce4af27eafd3156eb22efa5",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b1_v": {
+      "sha256": "088c3832f7bf06612b44a42b26047edac9221facd8ad7e16e6f6972df138bf0c",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b1_truth32": {
+      "sha256": "2fdaf26479db6de2dabcf6f219543d9015e1ab774ee25b3ac0e3dae103d6f285",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b1_truth64": {
+      "sha256": "9848c85e24a7c75c91c8c3778e98714c799c781b5caa85681ea8fc15c8b487e5",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b4_q": {
+      "sha256": "4eb69cfd52e34ecae1d52a6e76914ca98f215946d2f260e2f69e7f769262f629",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b4_k": {
+      "sha256": "1403e791c44d0cc8f58b49460cff3b959d96750a5cd5fc8570e6df7a380c205f",
+      "shape": [
+        4,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b4_v": {
+      "sha256": "5ff1094bfbcb3461b717e98c125be763e5c9c883239c225593ad1be375a05ece",
+      "shape": [
+        4,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b4_truth32": {
+      "sha256": "441c6cd0d2620daec47b3b49c3deff4bd4cd04b25979efb1f6ccecb57ed94067",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n64_b4_truth64": {
+      "sha256": "8982d23adcde4e7d2967773a0efdb3b5f61c2887f0859961ef02e1a51ff69e61",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b1_q": {
+      "sha256": "42837f4ac7e3759d74262b4d0fb4e032de132fa279d81b399e509fd4a9747adf",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b1_k": {
+      "sha256": "575821562efd591799227d16cf9fcef0a159d560b6e46a73156d7121ca6174c2",
+      "shape": [
+        1,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b1_v": {
+      "sha256": "b3106804777392fbcdf2da5730758206d1a001863d60c20635429efeb1b8ab71",
+      "shape": [
+        1,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b1_truth32": {
+      "sha256": "00f112b11fe1ff9f02712908ff9f8e9bf60919bdd1c9de76733b7ff32f1eac39",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b1_truth64": {
+      "sha256": "07e6ceff2777a5a98be45e6cbd3c240602d6f7bf22a8b3b833409f64c3cc5708",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b4_q": {
+      "sha256": "4eb69cfd52e34ecae1d52a6e76914ca98f215946d2f260e2f69e7f769262f629",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b4_k": {
+      "sha256": "9c05dbe52942dd8a8bc750b41d74b0d03182e5c00a7f2b042a470df84657175d",
+      "shape": [
+        4,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b4_v": {
+      "sha256": "827b929347fb67638af01b440c3084cedadd0b65f4f594a30990ed8f5dfb6297",
+      "shape": [
+        4,
+        8,
+        512,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b4_truth32": {
+      "sha256": "e2caeac7f4c9395a2226d227b0c7d83f0997e3f2479044cfea6ec67b68364b7b",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n512_b4_truth64": {
+      "sha256": "459994db21b50175ca647005506528f0a86fd78d7ae1c9be4da1ea5ddb62ee86",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b1_q": {
+      "sha256": "42837f4ac7e3759d74262b4d0fb4e032de132fa279d81b399e509fd4a9747adf",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b1_k": {
+      "sha256": "ab3f9a4ebe26b8b8cf84b55aed940d8f596d79e524c95cdc5b46e4efbbe87340",
+      "shape": [
+        1,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b1_v": {
+      "sha256": "fa76aa58ce0a2e102d0ebdb09f97fba9374577f01060b4a3a9f3429efa05f084",
+      "shape": [
+        1,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b1_truth32": {
+      "sha256": "0cd99af4f0e96a63d962a088db453db80009c9fb5e3550bf28976c940ea4590c",
+      "shape": [
+        1,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b4_q": {
+      "sha256": "4eb69cfd52e34ecae1d52a6e76914ca98f215946d2f260e2f69e7f769262f629",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b4_k": {
+      "sha256": "0041793e7a368cc46ed07f6f2c97568952786c005d534879ed4fac673b59b569",
+      "shape": [
+        4,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b4_v": {
+      "sha256": "d70a599ff5d7f63fe2e6ec7756b369a84a2f237b8f0fc4360968772ab554afe0",
+      "shape": [
+        4,
+        8,
+        2048,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "d_n2048_b4_truth32": {
+      "sha256": "7b57bb609723d143f3a14fe9c4ab73baabdfdfe82d04e571e25dbd293f3d8f02",
+      "shape": [
+        4,
+        16,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "gqa_q": {
+      "sha256": "0523089118855076dc13133a83793ff165179eaa502fe539cbba63e23ed69e1f",
+      "shape": [
+        1,
+        16,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "gqa_k": {
+      "sha256": "47c7d73874b81c42c6fc48df8afa047e4b6ada1df504d2cd7fc7690169da560d",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    },
+    "gqa_v": {
+      "sha256": "df101202567e8d499d9ea0cae8ef292979f79745d5614965cedb79ecb8d9172a",
+      "shape": [
+        1,
+        8,
+        64,
+        128
+      ],
+      "dtype": "float32"
+    }
+  },
+  "gqa_spotcheck_local": {
+    "forward_vs_manual_max_abs": 0.0,
+    "wrong_map_offset1_max_abs": 5.138926982879639,
+    "wrong_map_groupshift_max_abs": 5.138926982879639,
+    "forward_ok": true,
+    "wrong_maps_rejected": true
+  },
+  "mu_generator": {
+    "algorithm": "x = idx*0x9E3779B9 ^ seed; x ^= x>>16; x *= 0x85EBCA6B; x ^= x>>13; x *= 0xC2B2AE35; x ^= x>>16; val = (x%20001-10000)/10000",
+    "seeds": {
+      "q": "0x51002101",
+      "k": "0x51002102",
+      "v": "0x51002103"
+    },
+    "note": "S4000 侧 correctness truth 由 .mu 内部用本算法重生成（同分布同算法）；与 fixtures 的 SHA256 清单是两套独立数据，不互相校验 SHA256",
+    "checksum_demo_q_s64_b1_float64_sequential": 363.58170145750046,
+    "arithmetic_note": "C++ mu_value 为 fp32 算术（x%20001 / 10000.0f - 1.0f），demo 校验和按同精度逐值复刻后 float64 顺序累加（首跑 fp64 算术对拍失败 1e-3 级——两语言 RNG 复刻必须连舍入路径一起复刻，见 EXPERIMENT_LOG）"
+  }
+}

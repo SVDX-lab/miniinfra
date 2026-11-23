@@ -1,0 +1,31 @@
+{
+  "schema": "kernel-chapter09.fixtures.v1",
+  "seed": 20260909,
+  "created_at_utc": null,
+  "tensors": {
+    "x": {
+      "shape": [
+        128,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "4a356a2619d08499411654aff0534e0fa7d81fcf45709c0a4860ab921228769d"
+    },
+    "w": {
+      "shape": [
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "e706918e132695186297bffa99d3b8c9428fc11f458d23f527432b9d9a205424"
+    },
+    "y_ref": {
+      "shape": [
+        128,
+        1024
+      ],
+      "dtype": "float32",
+      "sha256": "acbaf18c451ac9f71ccf4e56f23a86938d82d74d41b3626b0790fa01629eca76"
+    }
+  },
+  "note": "y_ref = CPU FP64 \u4e2d\u95f4\u8ba1\u7b97\u5199\u56de FP32\uff08\u7b2c 03 \u671f\u6734\u7d20\u53c2\u8003\u8bed\u4e49\uff0ceps=1e-6\uff09"
+}

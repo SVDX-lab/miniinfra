@@ -1,0 +1,24 @@
+{
+  "schema_version": "kernel-chapter24.truthref.v1",
+  "source": "chapter_01/truth/truth-manifest.json (只读引用；本文件为引擎对拍所需的字段子集)",
+  "model": "chapter_01/models/qwen3-0.6b",
+  "prompt": "用一句话解释 RMSNorm 的作用。",
+  "max_new_tokens": 32,
+  "prompt_token_ids": [
+    151644, 872, 198, 11622, 105321, 104136, 77178, 24993, 43589, 100154,
+    1773, 151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271
+  ],
+  "prompt_token_count": 20,
+  "generated_token_ids": [
+    49, 4826, 24993, 54851, 101053, 100751, 102398, 71356, 15946, 32664,
+    112142, 71817, 100040, 14777, 32108, 54542, 105535, 3837, 23031, 100407,
+    104034, 33108, 100627, 104949, 102111, 1773, 151645
+  ],
+  "generated_token_count": 27,
+  "finished_by_eos": true,
+  "eos_token_id": 151645,
+  "first_token_id": 49,
+  "first_token_logit_top1": 26.680302,
+  "first_token_logit_top2": 19.257572,
+  "decoded_text": "RMSNorm 是一种用于神经网络中对权重进行归一化处理的技术，以稳定训练和提高模型性能。"
+}

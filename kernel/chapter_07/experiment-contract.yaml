@@ -1,0 +1,72 @@
+# 第 07 期实验合同：确定性与原子操作——浮点结合律的代价
+question: 浮点加法不满足结合律 → 同一 RMSNorm 的不同归约组织（串行/树形/原子交叉）产生什么位级与数值差异？确定性版与 atomicAdd 版的性能差是多少？三平台的确定性声明怎么写？
+hypothesis: 确定性 warp/block 树形归约版在同 Tile 同形状下 100 次运行位级 100% 一致；atomicAdd 版每次运行归约顺序由运行时决定 → 位级一致率 < 100% 但 FP32 漂移有界（~1e-7 相对）；性能上 atomic 版不快反慢（原子串行化 + launch 数增加）；ACC=half 时 atomic 组织改变卡死区行为（增量粒度变大可能幸存/更碎的增量可能冻结）。
+baseline: CPU FP32 串行（naive_rmsnorm_serial，自然顺序累加=确定性参照系）+ 第 02 期 ep03 kernel（确定性树形归约，原样复用）。
+variant: 确定性树形归约版（det）/ shared atomic 交叉归约版 / global atomic 交叉归约版（splits 可变）；ACC ∈ {fp32, half}；输入 dtype ∈ {fp32, fp16}（FP32 累加为合同默认，ACC=half 为第 05 期接续档）。
+single_variable: 平方和的归约组织方式（Pass 1 数据搬移与 Pass 2 写回与 ep03 kernel 逐字相同——y 的差异只能来自累加顺序）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（仅 hidden_size=1024 参与；本期算子级实验）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU 串行自然顺序；FP16 输入时真值用量化后输入——输入舍入与顺序漂移分开归因）
+  truth_generation: 固定 seed 本地生成（fixtures 30 组）+ SHA256 清单随代码上传；大形状（曲线）真值由服务器 bench C 速度现算（同一串行顺序口径）
+  performance_dtype: FP16（主口径）+ FP32（对照）
+  fixtures_seed: 20260801
+  curve_seed: 20260809（curve 输入运行时生成，numpy PCG64 跨平台同流）
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]
+    rows: [1, 4, 128, 512, 2048]
+    combos: 30
+  benchmark_shapes:
+    contract: rows={1,4,128,512,2048} × H=1024
+    curve: rows={128,2048} × H={1024,4096,16384,65536}
+  determinism_repeats: 100（每实现每 dtype；唯一输出数用 SHA256）
+  timing: 事件对 + 末尾一次同步（OperatorTimer，同第 02 期）；MUSA 侧同口径（M-12 launch 地板注明）；4090 另附 nsys 佐证
+  peak_bandwidth:
+    denominator: "第 01 期实测 D2D 拷贝峰值"
+    measured: {cuda: 918.8 GB/s, musa: 711.3 GB/s}
+    spec_reference: {cuda: 1008 GB/s, musa: 768 GB/s}
+  l2_capacity: {cuda: 72MB, musa: 24MB}   # workset 标注 L2 区/DRAM 区
+operator_contract:
+  math: "y_i = w_i * x_i / sqrt(mean_j(x_j^2) + eps)；累加 dtype 见下"
+  input_shape: "[rows, H]，H ∈ [127, 65536]（曲线覆盖），行数任意（grid-stride）"
+  weight_shape: "[H]，与 x 同 dtype"
+  output_shape: "[rows, H]，与 x 同 dtype"
+  accumulation_dtype: "det 版固定 FP32（ep03 合同延续）；atomic 版 ACC ∈ {FP32, half} 模板化——ACC=half 是第 05 期卡死区主题的接续档（half atomicAdd 要求硬件 fp16 原子，平台可用性实测记录）"
+  deterministic_declaration: "det 版：同 Tile 同 Shape 同输入位级可复现（本期 100 次实测确认）；shared/global atomic 版：不保证位级复现——归约顺序由原子到达顺序决定（运行时调度），数值漂移有界（FP32 累加 ≤1e-5 相对，实测记录）"
+  atomic_organizations:
+    shared: "每 block 一行；每线程局部平方和 atomicAdd 到 shared 行累加器；竞争强度 = TILE 线程；1 launch"
+    global: "grid = rows × splits；每 block 处理一行的 1/splits 段；每线程 atomicAdd 到全局 g_acc[row]；竞争强度 = splits×TILE 线程；调用前须 zero_acc → 整链 3 launches"
+  cross_kernel_constraint: "global atomic 版 scale 必须第二个 kernel（无 grid-sync）：重读 global x，理论字节多 1 次读 x；性能对账单独标注"
+  empty_tensor: "H=0 显式报错；rows=0 不发射 Kernel（返回成功）"
+  error_behavior: "tile 非 warpSize 整数倍 / splits 越界 / H<=0 显式拒绝（C ABI 状态码）；无静默回退"
+  numerical_tolerance: "det 版 vs 真值：FP32 输入 max_abs <= 1e-5（rsqrtf 近似 + 归约顺序）；FP16 输入（量化后真值）<= 1e-4（顺序漂移主导，输入舍入已分离）；FP16 输出档 <= 2e-2（输出舍入主导）；atomic 版 FP32 累加容差同 det + 顺序漂移带（实测记录，不设硬阈值——漂移带本身就是被测对象）"
+  deadzone_reference: "ACC=half 的失效行为接第 05 期：串行/蝶形互补失效（溢出 vs 卡死）；atomic 组织的增量粒度介于两者之间——预期卡死/幸存行为随组织变化（本期实测）"
+performance_model:
+  theoretical_bytes_det: "(rows*H*2 + H) * itemsize（读 x + 写 y + 读 w；H<=2048 shared 缓存）"
+  theoretical_bytes_atomic_global: "(rows*H*3 + H) * itemsize + rows*acc_size（scale 重读 x + g_acc 读写）"
+  latency_lower_bound: "理论字节 / 平台峰值带宽（达成率按各自口径分别报告，atomic 版不与 det 版直接比达成率）"
+  launch_overhead: "MUSA ~28µs/次地板（M-12）；global atomic 3 launches 在小形状被 launch 主导（预期实测）"
+out_of_scope:
+  - FP16/BF16 输入 dtype 的第 05 期完整矩阵（本期仅 fp32/fp16 两档，ACC 主题接续）
+  - cooperative groups grid.sync 的单 kernel 跨 block 归约（平台 API 可用性不定，记录为设计备注）
+  - 模型级（Logits/Greedy）对照——本期算子级
+  - 第 06 期非连续输入（本期合同只接受连续输入）
+correctness:
+  - fixture SHA256 完整性（30 组 × 3 张量）
+  - CPU 串行真值自洽（位级）
+  - 手算例（2×4 硬编码）
+  - det/shared/global × {fp32,fp16} × acc{fp32,half} vs 真值（30 组，比较口径同第 01 期）
+  - 3 次运行位级哨兵（正确性链内快速版；100 次正式主题在 benchmark.py --determinism）
+  - det vs atomic 同输入位级差计数（order_pairs）
+  - 边界：rows=0、tile 非法、splits 越界、ACC=half 平台边界
+experiments:
+  - 100 次重复位级一致率 + 最大漂移（三平台 × 三实现 × {fp32,fp16}）
+  - atomic vs 确定性性能差（同形状同口径，L2/DRAM 区 + launch 地板标注；4090 附 nsys）
+  - 漂移随 H 的增长曲线（H∈{1024,4096,16384,65536}×rows∈{128,2048}，ACC=half 接卡死区）
+  - atomic 竞争强度 vs 漂移（shared tile 扫描 + global splits 扫描）
+  - PyTorch deterministic 模式开关行为对照（组合链/F.rms_norm/index_add 对照组；MUSA 侧开关支持情况）
+  - CPU 侧：求和顺序全矩阵（六顺序×三累加 dtype）+ 乱序一阶模型 + 卡死区乱序检验
+acceptance_questions:
+  - 为什么两次运行结果不同？（atomic 版：原子到达顺序运行时决定 → 平方和位级不同 → rsqrt 放大传播到整行；det 版为何免疫）
+  - atomic 为什么慢且不确定？（原子串行化/竞争 + global 版 3 launches + 重读 x；不确定 = 归约顺序运行时定）
+  - 部署时要不要确定性、代价是什么？（性能差 + 实现复杂度 + 失效模式差异三维度，实测数据回答）

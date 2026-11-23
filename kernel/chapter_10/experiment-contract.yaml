@@ -1,0 +1,57 @@
+# 第 10 期实验合同（Kernel 调试与工具链）
+# 本期是"工具链体检"期：合同对象是缺陷集合与工具运行口径，不是单一算子。
+
+schema_version: kernel-chapter11.debug-tools.v1
+episode: 11
+topic: Kernel 调试与工具链（sanitizer 四件套 / TSAN 类比 / MUSA 生态对照）
+
+implementations:
+  cpu:
+    files: [race_counter_bad.c, race_counter_fixed.c, run_tsan.sh]
+    tool: gcc -fsanitize=thread（本地 gcc 13.3.0，WSL2）
+    claim: >
+      pthread 非原子计数器 = GPU shared-memory 竞态的 CPU 原型；mutex 修复版
+      = "同步原语建立 happens-before 边"的最小对照。
+  cuda:
+    defect_suite:
+      cases:
+        oob:    { defect: 循环哨兵 <= 越界写/读 1 元素, tool: memcheck }
+        race:   { defect: 共享累加器缺失 __syncthreads + 裸 RMW（WAW/RAW）, tool: racecheck }
+        uninit: { defect: 读 cudaMalloc 后从未写入的 magic 缓冲, tool: initcheck }
+        sync:   { defect: barrier 位于发散分支 + 活线程永不到达（真死锁）, tool: synccheck（名义） }
+      variants: [good, bad]
+      self_check: >
+        good 版与 host 串行参考逐位对照；race bad 版以 5 次运行 unique 输出数
+        证明非确定性；sync bad 版裸跑 timeout=124（死锁）。
+    health_targets:
+      sources_note: ch03/ch04/ch08 源码逐字节复制入本期目录（results/source-manifest.sha256 存证）
+      targets: [ch03-det(bench), ch04-fused, ch08-det, ch08-atomic-shared, ch08-atomic-global]
+      rows: 64 (racecheck 口径), h: 1024, tile: 256
+    overhead_target:
+      source: rmsnorm_bench（ch03 期原样）
+      config: {rows: 2048, h: 1024, dtype: fp32, tile: 256, warmup: 10, repeats: 100, check: false}
+      modes: [bare, memcheck, racecheck, initcheck, synccheck]
+    printf_trap:
+      modes: [order(4x32x3rep), trunc(1024x256, default vs 16MB FIFO), frag(4x64), cost(32x256x8iters)]
+  musa:
+    tool_probe: 只读盘点（bin 清单 / sanit|gdb|debug 名字 / mcc -g / MUPTI debug 面 /
+      printf FIFO limit 原型 / libmusart 符号面）
+    build_and_run: mcc 编译缺陷集与 printf 演示（shim 单点复用 cuda 源，内核 0 改动）
+
+sanitizer_options:
+  common: [--error-exitcode 42]
+  timeout: {default_s: 150, sync_bad_s: 60}
+  print_level: default(warn)，synccheck 形态探测追加 info 口径
+
+correctness_criterion: >
+  健康版 kernel（ch03/ch04/ch08）在 fp32 rows=64 h=1024 tile=256 下与 host
+  串行参考 max_abs_error 记录（第 02 期 --check 同口径）；缺陷版以"结果损坏
+  证据"（mismatches/unique 输出数/死锁）证明缺陷真实生效——工具报告与损坏
+  证据配对才是完整定位。
+
+known_deltas:
+  - sync 类缺陷在 CUDA 13 / sm_89 / sanitizer 2025.3.1 上 synccheck 三形态全部
+    0 报告（完成型被"退出线程隐式到达"硬件语义宽容；死锁型无报告）——
+    详见 EXPERIMENT_LOG E1 与 synccheck_probe.cu
+  - ncu 计数器权限在本环境被禁（ERR_NVGPUCTRPERM，前序期已实锤）——本期全部
+    使用 sanitizer 系（不需要计数器权限），与 ep02 记录一致

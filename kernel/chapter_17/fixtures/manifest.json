@@ -1,0 +1,158 @@
+{
+  "schema_version": "kernel-chapter18.fixtures.v1",
+  "seed_base": 20261118,
+  "seed_rule": "seed = SEED_BASE + M*100000 + K*100 + N；rng = numpy default_rng(seed)",
+  "truth_implementation": "matmul_naive_rows（FP32，k 升序累加）；tiny_int 用 matmul_triple_loop",
+  "gelu_formula": "0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))（tanh 近似式，Kernel 侧同式）",
+  "silu_formula": "x/(1+exp(-x))",
+  "combos": [
+    {
+      "shape": [
+        4,
+        8,
+        4
+      ],
+      "kind": "tiny_int_hand_checkable",
+      "seed": null,
+      "epilogue_truth": true,
+      "sha256": {
+        "A_4x8x4": "694aaf70ffec346b5dc6fd65103904b002e36c059799dbbb4d1ec8ff79e74702",
+        "B_4x8x4": "48c9260b40869cd74cc5bfadcd69367e37a13934851e20e416de3c87003f9c8c",
+        "bias_4x8x4": "f2b8eb0a270b04fcf01e43fa62669fc11e1f95e264765b454cb221f18cdfa7c8",
+        "C_4x8x4": "64c0dad2632e7847e8aba96d16c5fa076f0e99256bc2370c41af9a9f7ea37d6f",
+        "C_bias_4x8x4": "54ba6b4bd816c40df53e0629ae5050fb9887e8fd74a6d498c63261a827467c90",
+        "C_gelu_4x8x4": "c314a776738cc981adf72cd562e80bde91ddee5f670668cea0e34af77db6b5a5",
+        "C_silu_4x8x4": "41a3f4a935cb2067ee07bbd51d860bc2d032208527a30d77c0084f032046e590"
+      },
+      "sha256_note": "KI-18-09 修复：原键位塌缩（split 后 C_bias/C_gelu/C_silu 均记为 C），此处按全名重算，数据本身未变"
+    },
+    {
+      "shape": [
+        13,
+        17,
+        11
+      ],
+      "kind": "random",
+      "seed": 21562829,
+      "epilogue_truth": true,
+      "sha256": {
+        "A": "f356a07ec3ae6b36ea99906263bb5f3ce851433857fff8f17adf19e300038b76",
+        "B": "20e89f832a6c065e74ad36b92675519ac8c7c5c30a03ff471b823e46caa4ba58",
+        "bias": "96e1de3dc1fbfc769574471708978f04b021dd4110691d957c8b327e2c8a6d51",
+        "C": "4505e0406366b299c1acfd9706c210d56cb156d654267821f58c0e950ba4aa10",
+        "C_bias": "24a74e067ec283f07f8678b4568246c75c68b0ad7d53ba3e15c2c00de1b2fba5",
+        "C_gelu": "7e8a4993a57b241bcfa87cd26b2139de4a1167c8fde2876dc19feb81eeed3438",
+        "C_silu": "a7edeaf5526ad904ee5be772d843943b8efe2a9fa697e6cd9f9642551b4f8731"
+      }
+    },
+    {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "kind": "random",
+      "seed": 26667582,
+      "epilogue_truth": true,
+      "sha256": {
+        "A": "8d8e70346273f3f0852b591d519e59771254c4e5b7c814dddfed2de0a4502f3b",
+        "B": "851b072c0e76e948eb4467aabe02e736251c855aa31ff18516a014687667a962",
+        "bias": "7ab415a8b0699aa8b724a0334321033ae3d26990e5c1a140f7d14e14fc547512",
+        "C": "30209e0b52ba7938a337966b718885a2ba6afe5fb1f3b0d1151e23f883d2dcee",
+        "C_bias": "0a176762d13fa571b48edbbf611b67dd68313877af93afae0575950cf5339694",
+        "C_gelu": "67e701807f30b6b30a87e9b9cf2a921bfc7ecb7555c9fa9ee6b2984218ecc563",
+        "C_silu": "55dffac8a376ec382b4f0a9ecc192adeec55f7b62a3a30a4ec66a32e4bd9499f"
+      }
+    },
+    {
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "kind": "random",
+      "seed": 33074046,
+      "epilogue_truth": true,
+      "sha256": {
+        "A": "8df7c885a57cbac9707fd796705bf94e0b86726fe4bf1553a38dd8fe56f0e00f",
+        "B": "19e72a9326585c88c72cba410ec2251e0f40e744cedf1c1e544209ecd1b88354",
+        "bias": "3ee5a5c931c3042618bbde4b0bd87f1e63f19d7c4b376c6c0a7342ef66a67aab",
+        "C": "52ecc8e6e702f698700985fd48f3d221fc06ba042510df5ded200df2eefb542b",
+        "C_bias": "f27008901b98a1162f2f67059b57138835359b15145ad6bdfcab50b06cc0175c",
+        "C_gelu": "0d2c729d39eb046aa7c9d3576dc3329c92f8f40bdc167431dd1680c5d7b43ecd",
+        "C_silu": "b85cdb66fb50e4fd153392088f9204bae6d03cadd1e2afa84b7124dfd0e11954"
+      }
+    },
+    {
+      "shape": [
+        200,
+        200,
+        200
+      ],
+      "kind": "random",
+      "seed": 40281318,
+      "epilogue_truth": true,
+      "sha256": {
+        "A": "8d045cdcb87f30eaa33aa516e4b79934cbfc833fd104f2d3bd3ad46c8c4e197c",
+        "B": "346896a2e86b8dbc06c53a816aedcc404052cd1811a053c3fdfee184d987edca",
+        "bias": "a10264ee69dc71773f4e109292f980adc1c9f5d3e49685256f2cd924ca3f7794",
+        "C": "0947ad31bb0ed5376e6f0c6140ee3fa906c296a954b43ab3badf5b76479a9915",
+        "C_bias": "d6d0147515eb09b812c30c31f63661e889f4de4a592a5cf330148d8407ecd513",
+        "C_gelu": "c9b521d8e820bb9657b529f63674e7cc8330619ad2fd1fdb4d80d27dbadd0b68",
+        "C_silu": "bf928fed537f13a9b70f79b1753e0dcf7c698ec45c520440940f2bf98c342622"
+      }
+    },
+    {
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "kind": "random",
+      "seed": 45886974,
+      "epilogue_truth": true,
+      "sha256": {
+        "A": "541ccbc3cf2aa34421b5b1a1467f57ad0da15a631accbad3bec3a16eeccb6f17",
+        "B": "d607a71310fb0988d5ec9d8c478a4f11675ee4ea220baea262bc0d69ff1459f9",
+        "bias": "d4f58ff2b933a3ce15ffc4abe424d7ab5b2e413d3a9c36a94fd75f4634333fcd",
+        "C": "e3f16d0a6f5d5a12a18d17eded4ad3410151f3036c6000f95642db7a70cd89e6",
+        "C_bias": "90dc01c9e208af0d5783515a0adc778ea1aeb9b7aed6cdb09d68b78c76e1f561",
+        "C_gelu": "dd6f60d3ce383ecb1c10659eb7aceb35a6d8957f471dee8b76cd1872d4f0812e",
+        "C_silu": "f6a3704119cff9c8aa634c91daa97692c9a09f0994647c2bab243a53c07ceb65"
+      }
+    },
+    {
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "kind": "random",
+      "seed": 71512830,
+      "epilogue_truth": false,
+      "sha256": {
+        "A": "ebcdae9af1e42daf6e1e0b58c50e3566e4818503c2b97d6cab4d8239826aeffc",
+        "B": "5e6beceb9f1af3414aaa85cfe0aed2c160567e4a5d138303d8966a58b694de4e",
+        "bias": "497c4df95a598dc220c286458e9142cc2e5c2dd7e1f3b19638ab5aa75fa6576a",
+        "C": "9343c91377d33b812a2a4ce548d2bbadc003f989b66e1f38c186e594cc4ce1be"
+      }
+    },
+    {
+      "shape": [
+        1024,
+        1024,
+        1024
+      ],
+      "kind": "random",
+      "seed": 122764542,
+      "epilogue_truth": false,
+      "sha256": {
+        "A": "bb2f05390e8b73cfcfe225339c989a927cb8fac90c76e3ef9e58efd85a05bbe6",
+        "B": "386a4fb41d810ac2fe97e444680f9beb6eeada96dd70e23c271d7ec4cdd5d77f",
+        "bias": "ba628a10b81a6ecd98ba08ea9eda91873e5e9e67aaca6318094b7b73800cefdf",
+        "C": "1155f5e71c2171e10ef3e57d435c3316bd4b61ba8b00998395649c29d507dad2"
+      }
+    }
+  ],
+  "npz_sha256": "21dd1030733a0706648dd36383a825a39df9d48ed194eaf876e9adc666196bfc"
+}

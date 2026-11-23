@@ -1,0 +1,37 @@
+chapter: "12"
+title: 准入与放置
+status: implemented
+question: |
+  高并发任务怎样放置？
+hypothesis: |
+  放置策略的差异在"容量紧张且 worker 异速"时显现，且主要体现在尾部：
+  random 按任务数均分，慢 worker 队列以一半速度消化，被分入慢队列的任务
+  等待被拉长数倍（P95/均值显著变差；P50 可能不差，因快 worker 一侧先完成）；
+  cost-aware（按声明时长折算的预计排空时间放置）把工作按容量比例分给快 worker，
+  排队 P95 与均值显著更低。若两策略尾部分布无差异，则假设不成立。
+baseline: |
+  单 worker（3 槽 × 1.0 速），同任务序列。
+variable: |
+  放置策略：random（均匀随机选 worker）→ cost-aware（选预计排空时间最小者：
+  (在跑剩余 + 排队时长之和)/槽位数，时长用任务声明的 duration_s 按 worker 速度折算）。
+  双 worker 总容量与基线相同：2 槽 ×1.0 + 2 槽 ×0.5 = 3。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  worker模型: 执行节点 = 固定槽位数 + 本地 FIFO 队列 + 自己的执行容器（exec 跑命令）
+  速度模拟: slow worker 的 sleep 时长按 1/0.5 缩放（同机模拟节点，大纲声明）
+  负载: 每轮 24 任务（8 长 1.8s + 16 短 0.4s，交错固定），声明时长已知，客户端并发 8
+  轮数: 双 worker 场景各 2 轮（聚合 48 样本）
+correctness_checks:
+  - 三种配置全部任务完成
+  - 槽位不变式：任意 worker 并发 ≤ 槽位数
+  - random 快 worker 占比 0.35–0.65（按任务数均分，二项波动内）
+  - cost-aware 快 worker 占比 >0.55（按容量比例分配）
+performance_metrics:
+  - 排队等待的 P95 与均值（random vs cost-aware，聚合样本；差异主要在尾部）
+  - 每 worker 任务分布、最大并发
+fault_injection: 无（本期变量是放置策略）
+exclusions:
+  - 同机 worker 模拟节点，不模拟真实多机网络效应（大纲声明）
+  - 不做抢占/迁移；轻载同质 worker 下策略无差异（容量与生命周期主导，见各期结论）
+known_risks:
+  - WSL2 调度噪声；等待分布差异以聚合样本判定

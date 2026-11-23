@@ -1,0 +1,130 @@
+{
+  "schema_version": "kernel-chapter13.fixtures.v1",
+  "seed": 20261113,
+  "probe_shape": [
+    8,
+    1024
+  ],
+  "tensors": {
+    "op_probe_float32_input": {
+      "sha256": "eb8d8ed055e390d258871d7bfd92339536d1c93787bb42d011a7e280c3067057",
+      "dtype": "float32",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_float32_residual": {
+      "sha256": "5a7a5b75795250130a6b4434b2c3f9781b82b48aaecf742c677fb36bbf252a60",
+      "dtype": "float32",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_float32_weight": {
+      "sha256": "def9d2edb3376c0291a5024765e9d13d7bf780779dcaa0990b51f819082ed4a7",
+      "dtype": "float32",
+      "shape": [
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_float16_input": {
+      "sha256": "0981bb5091ac67cfbb12c70b527f9a4651b4de7033074b7a633e7cd64250c499",
+      "dtype": "float16",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_float16_residual": {
+      "sha256": "291a01b5a3f56b3ee269ebca46f0c04173eddce36fdfbfb9fdebc31b82b1e14d",
+      "dtype": "float16",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_float16_weight": {
+      "sha256": "b71fcd5fcde6be186c6c37e31e71e190d581ad3a1fffc391a3ce6e88ae32912d",
+      "dtype": "float16",
+      "shape": [
+        1024
+      ],
+      "storage_format": "numpy-native"
+    },
+    "op_probe_bfloat16_input": {
+      "sha256": "d7f75166d6d5495ee35645a91aa412e4f4a74b93886af8adebae9bb7f66a8901",
+      "dtype": "bfloat16",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "uint8-raw-bytes"
+    },
+    "op_probe_bfloat16_residual": {
+      "sha256": "d26e4a78408fff92d9273186d317201efcc1447a5af314a7880dbaf1439ec38d",
+      "dtype": "bfloat16",
+      "shape": [
+        8,
+        1024
+      ],
+      "storage_format": "uint8-raw-bytes"
+    },
+    "op_probe_bfloat16_weight": {
+      "sha256": "34e7d14f5d5e481300b9bbdbfe1c463415009b38314c844f0554b8377993bd07",
+      "dtype": "bfloat16",
+      "shape": [
+        1024
+      ],
+      "storage_format": "uint8-raw-bytes"
+    },
+    "rmsnorm_probe_fp32_input": {
+      "sha256": "8a1b86f99a3e72aa2f2801572853e2f30429654db3714c3b691efe707a35997c",
+      "dtype": "float32",
+      "shape": [
+        8,
+        1024
+      ]
+    },
+    "rmsnorm_probe_fp32_weight": {
+      "sha256": "a38c9156792e1c7fb791a6e7c9e13f6330fd1fdacafe4f92f1c2888c93bb45fe",
+      "dtype": "float32",
+      "shape": [
+        1024
+      ]
+    },
+    "rmsnorm_probe_fp32_expected": {
+      "sha256": "def4e7a61a87b35b62518520fd86a6f3e4dacc2fdd3b11da6f95a912dfb4ca09",
+      "dtype": "float32",
+      "shape": [
+        8,
+        1024
+      ]
+    }
+  },
+  "shared_anchor": {
+    "truth": "chapter_01/truth/truth-manifest.json（模型级复核锚点，本期不复制）"
+  },
+  "arrays": [
+    "op_probe_bfloat16_input",
+    "op_probe_bfloat16_residual",
+    "op_probe_bfloat16_weight",
+    "op_probe_float16_input",
+    "op_probe_float16_residual",
+    "op_probe_float16_weight",
+    "op_probe_float32_input",
+    "op_probe_float32_residual",
+    "op_probe_float32_weight",
+    "op_probe_fp32_expected_output",
+    "op_probe_fp32_expected_residual",
+    "rmsnorm_probe_fp32_expected",
+    "rmsnorm_probe_fp32_input",
+    "rmsnorm_probe_fp32_weight"
+  ]
+}

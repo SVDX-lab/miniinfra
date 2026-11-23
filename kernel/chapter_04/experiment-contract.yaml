@@ -1,0 +1,70 @@
+# 第 04 期实验合同：算子注册与接回 Qwen3——进入框架的 Dispatch
+question: 自定义融合算子被框架 dispatch 机制认识的三个世界路径各是什么？注册进入模型后，微基准收益在"调用占比 × 其他算子稀释"下端到端各剩多少？CPU fallback 如何显式化（对照静默回退）？
+hypothesis: CUDA 走 TORCH_LIBRARY + CUDA dispatch key 可以原样复用第 03 期 kernel（device 代码零改动）；MUSA 走 torch_musa 扩展 + PrivateUse1 key —— 注册 TU 能编过（ep03 变体 1 先例），但流获取受 M-10 约束（默认流）；注册层不改数学 → 正确性链 6–8 全绿、Greedy 32 Token 三后端一致；端到端收益 = 56 次 op 调用 × 微基准差值，被 LM Head/Attention/MLP 等大算子稀释（prefill 中 op 时间占比预计 <10%，端到端收益 <5%），MUSA 因 launch 地板更大收益占比更高。
+baseline: 单算子对照 = 原生组合表达式链（t=r+h + RMSNorm 模块数学，框架多 kernel 发射）+ 第 03 期 ctypes 直传通道（同一 kernel 非注册路径，dispatch 开销对照）；模型级 baseline = 第 01 期手写 Qwen3（native 路径，ep01 实测：CUDA prefill 38.54ms/decode 32.66ms；MUSA prefill 45.75ms）。ep02/03/04 数字直接引用其 EXPERIMENT_LOG/results，不重测。
+variant: CPU composite fallback（显式注册的 fallback 语义载体）/ CUDA TORCH_LIBRARY 注册（复用 ep04 kernel）/ MUSA torch_musa 注册（PrivateUse1；路径不通 → pybind + Python 显式路由替代并记录）/ 同一可切换模型文件（native vs fused）。
+single_variable: 数据流组织方式（原生"Residual Add + RMSNorm 模块"组合表达式 vs 56 次融合 op 调用）；同一模型实例同一权重（fused_ops 开关切换），数学定义一致（舍入次数差由容差链吸收）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（chapter_01 同一权重与 truth）
+  rms_norm_eps: 1e-6
+  model_dtype: GPU fp16（第 01 期合同公共性能路径）/ CPU fp32（真值锚点口径）
+  truth: chapter_01/truth/（probes.npz + truth-manifest.json，probes_npz_sha256=fdc38df0…；本期不生成、只消费）
+  fixtures: 第 03 期 30 组算子级 fixtures 原样复用（逐张量 SHA256 150/150 核对，一致性 = "注册层未改变被注册算子语义"的证据）
+  prompt_token_ids: 来自 truth-manifest（20 token，"用一句话解释 RMSNorm 的作用。"）
+  greedy: max_new_tokens=32，eos=151645，每步重算整段（第 01 期无 KV Cache 口径）
+  benchmark_shapes: rows [1, 4, 20(=seq), 128, 512, 2048] × H=1024
+  timing: OperatorTimer（事件对/末尾一次同步，P50/P95/mean/min + warmup/repeats 入结果）；层 3 decode 用逐步 wall-clock + backend_sync
+  peak_bandwidth: 分母单源 = ep02 实测 D2D 峰值（cuda 918.8 / musa 711.3 GB/s）
+op_contract:
+  name: mini_infra_ops::fused_add_rmsnorm
+  schema: "fused_add_rmsnorm(Tensor(a!) input, Tensor(b!) residual, Tensor weight, float eps) -> ()"
+  semantics: |
+    vLLM fused_add_rms_norm 同款双 mutator、零返回、零分配：
+      residual ← residual + input（T dtype 一次舍入，FP32 加法语义）
+      input    ← RMSNorm(residual) * weight（平方和/均值 FP32，输出写回 input buffer）
+    调用后 residual buffer = 更新后的 residual（下一层输入），input buffer =
+    归一化输出（下一步输入）——Transformer residual 流的两个活值各就各位。
+  shape: "input/residual 同形状（vLLM 同款允许任意 leading 维度，模型激活 [batch, seq, H]），末维 H；weight [H]"
+  aliasing: "input 与 residual 双 buffer 原地改写（op 显式语义）；y 写进 input buffer 即融合 kernel 的 y==h_in 刻意 alias（行内 Pass1 读/Pass2 写被 __syncthreads 分隔，每行单 block 独占）；input/residual/weight 三指针互不相同（TORCH_CHECK 拒绝）"
+  registration_entry:
+    cuda: "TORCH_LIBRARY(mini_infra_ops) + TORCH_LIBRARY_IMPL(..., CUDA)；c10::cuda::getCurrentCUDAStream()；at::cuda::CUDAGuard；C10_CUDA_KERNEL_LAUNCH_CHECK"
+    musa: "TORCH_LIBRARY_IMPL(..., PrivateUse1)；流获取两变体（0: c10::musa::getCurrentMUSAStream 预期触发 M-10；1: 默认流，ep03 先例）；构建 torch_musa.utils.musa_extension.load（M-08/M-09：单编译单元 .mu）"
+    cpu: "同库注册 CPU key impl = ATen composite（显式 fallback：触发时 stderr 留痕）；另有同名族 fused_add_rmsnorm_no_cpu_fallback 只注册 GPU key —— CPU 张量调用它采集框架显式报错原文（对照静默回退）"
+  fallback_policy:
+    trigger_conditions: "router 注册表按 tensor.device.type 查找；未注册设备在 strict 模式下显式 RuntimeError（列出已注册集合）；explicit_fallback 模式要求预先注册 is_fallback=True 的 CPU 降级实现且每次降级留痕计数"
+    framework_level: "GPU 服务器上 CPU 张量调用注册 op → dispatch 到 CPU key impl（composite），stderr 留痕 —— 显式 fallback；无 CPU impl 的同名族 → 框架 NotImplementedError 原文留档"
+    silent_contrast: "原生组合表达式（r+h; RMSNorm 模块）在任何后端被框架静默逐算子执行——对照组：调用方无感知、无留痕"
+  kernel_reuse: "device 代码 = 第 03 期 fused_rmsnorm_kernels.cu/.mu 逐字原样（含第 02 期 rmsnorm kernel）；注册 TU 只新增 launch_fused_add_rmsnorm_streamed（多了 stream 参数）与合同检查/注册宏；warpSize 双口径不进注册层（device builtin 自洽，M-20）"
+  error_behavior: "dtype ∉ {fp32,fp16}（含 bf16——第 05 期范围）/ 形状不一致 / H=0 / 非连续 / aliasing / 设备不匹配 → TORCH_CHECK/ValueError 显式报错，错误原文进结果 JSON；无静默回退"
+  determinism: "同输入同 shape 位级可复现（继承 ep04 kernel 性质）；CPU composite 与原生模块数学在 FP32 下位级一致（冒烟实测）"
+  numerical_tolerance: |
+    注册层不改数学：残差 t 与真值位级一致（加法无累加）；y 的差异来源 =
+    ①融合 kernel 单次舍入 vs 原生模块两次舍入（T 量化 + T 乘 weight）
+    ②归约顺序。容差链继承第 01 期：单层误差 / 逐层累积 / 最终 Token 三层
+    证据；验收硬线 = Greedy 32 Token 与真值一致（或差异被首分叉位置 +
+    top5 覆盖解释）。
+performance_model:
+  op_calls_per_forward: "56（= 28 层 × 2；layer 0 的 input_layernorm 无前置 Add 保留原生模块，终局 op 覆盖最后 Add + final norm）"
+  fused_coverage: "原生 56 次 Residual Add + 57 次 RMSNorm 中，56 对相邻 Add+Norm 全部进入融合 op"
+  microbench_ceiling: "端到端收益上限 = 56 × (组合链 P50 − 融合 op P50)@rows=seq（prefill）；decode 步 seq 20→51 逐增长，按 L1 区间理解"
+  dilution_factors: "LM Head（151936×1024 GEMM，vocab 维主导）、Attention QKV/O GEMM、MLP（6144 中间维）、softmax/RoPE/残差链等全部不受益；op 时间占比 = 56 × op P50 / forward 总时间"
+  theoretical_bytes: 继承第 03 期（分离 5n+H vs 融合 4n+H，上限 1.25×；MUSA 上另有 M-12 瓶颈消除效应）
+  dispatch_overhead: "torch.ops 注册路径 vs ctypes C ABI 直传（同一 kernel）的 P50 差 = dispatcher/pybind 开销；rows=1 档量化"
+metrics:
+  - 层 1：每 shape 的 composite/fused_op/ctypes P50/P95 + 加速比 + 发射数（profiler：组合链 vs 注册 op）
+  - 层 2：原生层 vs 融合层 P50 + 加速比（seq=20，真实权重）
+  - 层 3：prefill P50（native/fused）+ decode 逐步/总时间 + 峰值显存 + end_to_end_gain
+  - 稀释归因：op 时间占比、theoretical_prefill_gain_ms（微基准求和）vs measured_prefill_gain_ms、realization 比值
+  - 正确性：30 组注册回归、边界/fallback 证据、§9 第 6/7/8 步三层误差 + Greedy 一致性
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  model_policy: 模型推理在两台服务器跑（4090 CUDA 列 / S4000 MUSA 列）；CPU 列模型级在服务器 CPU（torch fp32）执行，本地 CPU 覆盖冒烟 + 层 1
+  migration_mode: 注册层新代码（.cu 两份）+ ep04 kernel 库逐字复用；对照维度 = 注册 TU 的结构差异（dispatch key/流获取/guard/错误检查/构建脚本）
+  reuse: chapter_01 qwen3_model.py（复制改造为可切换版，diff 仅 fused_ops 开关与 _forward_fused）；chapter_03 kernel/绑定/build 模式；chapter_02 M-08/09/10 证据
+correctness_profile: 30 组 × {fp32, fp16} × 注册 op 重放 + 边界 9 例 + §9 第 6/7/8 步（native/fused 双路径 × {单模块, 单层, 全模型}）
+common_benchmark_profile: 合同 6 行数 × 模型 dtype × {composite_chain, fused_op_registered, ctypes_fused(GPU)} + 层 2/3
+acceptance_questions: 大纲行 716——(1) 自定义算子进入 dispatch 的条件；(2) CPU fallback 是怎么发生的、为什么必须显式化；(3) 三层测量里收益各剩多少
+gpu_plan:
+  cpu: 冒烟 + 层 1 本地；模型级三层在服务器 CPU（fp32）补全
+  one_gpu_cuda: cpp_extension 构建 + 注册证据 + 正确性链 6–8 + 三层测量 + profiler 发射数
+  one_gpu_musa: musa_extension 注册路径正式验证（变体 0/1 证据）+ PrivateUse1 dispatch + 完整 Qwen3 前向 + 三层测量

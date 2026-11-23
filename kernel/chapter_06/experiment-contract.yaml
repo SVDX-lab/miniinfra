@@ -1,0 +1,118 @@
+# 第 06 期实验合同：布局即性能——contiguous 与非连续输入
+question: 同一 RMSNorm Kernel 面对非连续输入（转置视图/行切片视图）时，"显式报错 / 内部 contiguous() / kernel 内 stride 寻址"三种合同策略的延迟、有效带宽、隐性成本各是多少？.contiguous() 的拷贝发生在哪、贵多少、能否摊销？CUDA 与 MUSA 的 stride 行为是否一致？
+hypothesis: 转置视图（stride=(1,rows)）使合并访存完全失效——策略 C（stride 寻址 kernel）的有效带宽塌缩到连续基线的 ~1/8（FP32，32B sector 只贡献 4B）；策略 B（内部 contiguous()）延迟 = 连续基线 + 一份 layout copy，拷贝占比随形状增大趋近 50%（读写对称的 layout copy 与 kernel 同为带宽受限）；策略 A 显式报错把布局问题交给调用方——"先转置回来再算"的组织方式在重复调用下摊销拷贝（N 次调用省 N-1 次拷贝）。CPU 侧 torch 原生路径对非连续输入也有显著减速（cache 局部性），MUSA 与 CUDA 的 stride 语义预期一致（ATen 层行为）。
+baseline: 连续输入（行主序）直喂 kernel（第 02 期 RMSNorm Kernel 原样复用）= 带宽与延迟基线；第 01 期实测 D2D 峰值 = 达成率分母。
+variant: 策略 A（reject：is_contiguous 检查 + TORCH_CHECK）/ 策略 B（auto-copy：内部 .contiguous() 后走连续 kernel）/ 策略 C（strided：泛化 index 计算直接吃任意布局），三平台同构。
+single_variable: 输入布局（连续 / 转置视图 / 行切片视图）与合同策略（A/B/C）；Kernel 数学语义不变。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope（仅 hidden_size=1024 参与；本期不做模型级对照）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU stride 显式寻址实现 naive_rmsnorm_strided——第 02 期真值口径 + 物理寻址演示）
+  truth_generation: 固定 seed 本地生成 + SHA256 清单，随代码上传两台服务器共用；转置/行切片视图由 x 零拷贝派生（逻辑值不变 → 期望 y 一份覆盖三布局）
+  performance_dtype: FP32（主口径，4B 元素放大非连续访存的 sector 浪费）+ FP16（对照）
+  fixtures_seed: 20260701
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]
+    rows: [1, 4, 128, 512, 2048]
+    combos: 30
+  benchmark_shapes:
+    rows: [1, 128, 2048, 32768]        # 32768 = DRAM 区探针：x 128MB ≫ L2（4090 72MB / S4000 24MB）
+    hidden_size: 1024
+    spot_hidden: [127, 129]            # 非整 Tile 抽查（rows=2048）
+  l2_cache_bytes_measured: {cuda: 75497472, musa: 25165824}   # ep03 实测（C API）
+  timing: OperatorTimer（事件对 + 末尾一次同步，统一 Warm-up/重复次数，P50/P95/mean/min）；MUSA 无逐 kernel 时长 → 端到端事件对口径（M-04 延续）；CUDA 侧 nsys 提供 kernel 发射数证据（ncu 被禁，KI-02-02 延续）
+  peak_bandwidth:
+    denominator: "第 01 期实测 D2D 拷贝峰值（达成率分母单源）"
+    measured: {cuda: 918.8 GB/s, musa: 711.3 GB/s}
+    spec_reference: {cuda: 1008 GB/s, musa: 768 GB/s}
+operator_contract:
+  math: "y_i = w_i * x_i / sqrt(mean_j(x_j^2) + eps)；平方和与均值 FP32 累加（继承第 02 期）"
+  input_shape: "[rows, H]，H ∈ [127, 2048]，行数任意（grid-stride）"
+  weight_shape: "[H]，与 x 同 dtype，恒要求连续（[H] 权重无非连续用例）"
+  output_shape: "[rows, H]，与 x 同 dtype，**恒为行主序连续**（三策略一致：at::empty 新分配，不继承输入布局——不放大布局传染）"
+  accumulation_dtype: FP32
+  # ===================== 第 06 期合同修订核心条目 =====================
+  stride_policy:
+    title: 是否允许非连续 Tensor（大纲 §8 显式条目——本期修订对象）
+    options_evaluated:
+      A_reject: "is_contiguous() 检查，非连续 TORCH_CHECK 显式报错——把布局决策交给调用方（可摊销：调用方一次归一化，多次算子调用复用）；错误信息必须含 shape/stride 与处理建议"
+      B_auto_copy: "内部 x.contiguous() 后走连续 kernel——调用方零感知，但每次调用都付一份 layout copy（读+写一遍全量数据），成本隐性且不可摊销"
+      C_strided: "kernel 内泛化 index 计算（物理地址 = row*stride_row + j*stride_col）——零拷贝零报错，但访存模式由 stride 决定：stride_col≠1 时合并访存失效，带宽塌缩（实测见 stride_policy_evidence）"
+    decision_v1: |
+      主合同策略 = **A_reject（显式报错）**，同时暴露 B/C 作为显式备选入口
+      （rmsnorm_policy_b / rmsnorm_policy_c），理由（三平台实测已回填至
+      stride_policy_evidence）：
+      1. C 的带宽塌缩是硬件事实（4090 fp32 DRAM 区 1.77x / S4000 4.49x /
+         两平台 fp16 3.2x；nsys kernel 口径 L2 常驻下仍 4.75x）——"kernel 支持
+         非连续"不等于"非连续可用"，默认接受 C 会把跨平台不一致的减速藏进
+         静默路径（同一代码在 S4000 上慢 4.5 倍而开发者按 4090 经验无感）；
+      2. B 的拷贝每次调用重付（4090 fp32 +63% / fp16 +75% 延迟；50 次调用
+         总时间 2.09x @S4000、2.63x @4090），且把"调用方其实可以只归一化一次"
+         的摊销机会藏掉——(N-1)×copy 摊销模型在两平台 ±5% 成立；
+      3. A 把代价显式化：报错信息给出处理选项（一次性 contiguous + 复用），
+         与第 03 期经验一致——合同里"行为策略"必须显式化，静默行为最贵。
+      例外条款（C/A 混合）：行切片视图（stride_col=1、仅行间跳步）合并访存
+      保留、带宽损失实测 ≤0.3%（4090）/ ≤1.9%（S4000）——若后续实测证明可
+      接受，可对"最后一维连续"的输入放行（本期为数据留接口，不默认放行）。
+      补充语义警告：torch is_contiguous 对 size=1 维豁免——rows=1 时任何
+      [1,H] 视图都判"连续"，策略 A 会放行且数值正确（合同只保证寻址语义，
+      不保证典型物理布局）。
+    stride_policy_evidence:   # 三平台实测回填（fp32 rows=32768 H=1024 除注明外）
+      cuda: {C_tv_bw_ratio: 1.773, B_copy_share: 0.6319, A_eff_bw_gb_s: 916.5,
+             A_achievement: 0.9975, fp16_C_tv_ratio: 3.208, fp16_B_copy_share: 0.7512,
+             layout_copy_vs_clone: {fp32: 1.718, fp16: 3.233},
+             org_50calls_saving: "fp32 62.0%（38.37ms→14.59ms）/ fp16 74.0%",
+             nsys_kernel_evidence: "B=2 kernel（copy 30.4us+rmsnorm 6.7us）/C=1（strided 31.8us）/A=1（6.7us）/trap=0；kernel 口径 strided 减速 4.75x（rows=2048 L2 常驻）"}
+      musa: {C_tv_bw_ratio: 4.489, B_copy_share: 0.5077, A_eff_bw_gb_s: 628.8,
+             A_achievement: 0.884, fp16_C_tv_ratio: 3.198, fp16_B_copy_share: 0.4357,
+             layout_copy_vs_clone: {fp32: 1.154, fp16: 1.615},
+             org_50calls_saving: "fp32 52.2%（43.10ms→20.62ms）",
+             caveat: "MUSA 无逐 kernel 时长（M-04），端到端事件对口径"}
+      cpu: {torch_tv_slowdown: 1.025, copy_share: 0.501, layout_copy_ms: 92.0,
+            kernel_ms: 91.6, numpy_ascontiguousarray_bw_gb_s: 0.76,
+            note: "rows=32768 fp32；本地 WSL2 torch 2.6.0+cpu"}
+  layout_notes:
+    transposed_view: "x = base[H, rows].t()：逻辑 [rows, H]、stride=(1, rows)——归一化维步长=rows，最坏布局；rows=1 时自动退化连续（torch is_contiguous=True，实测）"
+    row_sliced_view: "x = big[:, :H]：stride=(H+pad, 1)——行内合并访存保留，行间跳步；大模型 cache slice 的常见布局"
+    transpose_back_trap: "tv.t() 本身连续 → tv.t().contiguous() 零拷贝返回别名，再 .t() 回来布局不变——'先转置回来'必须物化（.contiguous() 作用于非连续的那个视图才有拷贝），实测 data_ptr 证据"
+    expand_stride0: "stride=0 广播视图：策略 C 数值正确（stride_row=0 读同一物理行）；策略 A 拒绝（非连续）；策略 B 拷贝"
+    size1_dim_exemption: "torch is_contiguous 判定对 size=1 的维不约束 stride：rows=1 时转置视图/行切片视图自动'连续'（实测 [1,H] stride=(1,1)/(H+8,1) 均判 True）——策略 A 对 rows=1 的非典型视图合法接受且数值正确；合同含义：'is_contiguous=True' 不保证物理布局典型，仅保证 kernel 寻址语义正确"
+  # ===================== 修订条目结束 =====================
+  aliasing: "无 aliasing；不修改输入；输出恒新分配"
+  vectorization: "策略 C 仅在 stride_col==1 且 h%kW==0 且行首 16B 对齐时向量化；stride_col≠1 强制标量路径（每元素一次 stride 乘加寻址）"
+  tile: "block 维度 = 编译期模板 {64,128,256,512,1024}，默认 256；warpSize 泛化继承第 02/03 期（M-20：device builtin 口径）"
+  empty_tensor: "H=0 显式报错；rows=0 返回空 Tensor（不发射 Kernel）"
+  error_behavior: "Shape/dtype/设备/权重连续性/H=0 全部显式报错；策略 A 对非连续 x 显式报错（报错全文快照入 results/error-snapshot-*.json）；策略 B/C 对任意布局给出数值正确输出"
+  determinism: "同 Tile 同 Shape 同输入位级可复现（策略 C 含转置视图，实测 3 次位级一致）"
+  numerical_tolerance: "FP32 vs 真值 max_abs <= 1e-5；FP16 <= 2e-2（第 02 期口径）"
+performance_model:
+  theoretical_bytes: "(rows*H*2 + H) × itemsize（读 x + 写 y + 读 w；三策略同口径——策略 B 的额外 layout copy 单列：+ rows*H*2 × itemsize）"
+  layout_copy_bytes: "rows*H × itemsize × 2（读一遍 + 写一遍）"
+  latency_lower_bound: "理论字节 / 平台峰值带宽（连续布局）；策略 C 转置视图下界 = 读放大 32B/4B(FP32) sector 浪费 → 理论 ≈ 8x 减速（FP32）/ 16x（FP16）"
+  compute_intensity: "~2 FLOP/元素，memory-bound（继承第 02 期）；布局问题本质是带宽利用率问题"
+out_of_scope:
+  - 转置 kernel 本身的优化（Tensor Core transpose / shared memory 转置——第 16 期 transpose 算子已覆盖）
+  - 多维布局（channels_last 等 4D memory format——图像域布局，语言模型主线用不到）
+  - 确定性对照（第 07 期）；BF16/量化路径（第 05/15 期）
+correctness:
+  - fixture SHA256 完整性（30 组 × 3 张量）+ stride 公式 vs numpy as_strided 全等
+  - 手算例（2×4）四种布局 × 三策略全对
+  - 30 组 × {L0 连续, L1 转置视图, L2 行切片} × {A(报错快照), B, C}：max/mean 绝对误差、余弦相似度、NaN/Inf
+  - fp16 抽查 3 组（H1024_r2048 / H127_r4 / H129_r128）
+  - 确定性：策略 C 转置视图同 Tile 3 次位级
+  - 边界：H=0、rows=0、expand stride=0 广播视图、transpose-back 陷阱 data_ptr 证据
+metrics:
+  - 三策略延迟 P50/P95/min（三布局）；.contiguous() 拷贝占比（B 相对连续基线）
+  - 有效带宽与达成率（连续基线 vs C 转置视图 vs C 行切片，比值即带宽损失）
+  - layout copy 裸成本（transpose-copy / 行 gather / 连续 clone 对照）
+  - 摊销实验：N 次调用下 策略B总时 vs 一次性归一化+连续 kernel 总时（省 N-1 次拷贝模型核对）
+  - MUSA vs CUDA stride 行为探针逐项 diff（.stride()/is_contiguous/.contiguous()）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  model_policy: 本期不用模型权重（算子级实验）
+  correctness_profile: 30 组 fp32 × 3 布局 × 3 策略 + fp16 抽查
+  common_benchmark_profile: rows={1,128,2048,32768}×H=1024 × {fp32, fp16} × 三策略
+gpu_plan:
+  cpu: stride 教学实现全量实验 + fixtures + torch CPU 探针（本地，无 GPU 依赖）
+  one_gpu_cuda: build + correctness + benchmark 三策略 + copyops/org + nsys 发射数证据（B=2 kernel / C=1 kernel / A 报错）
+  one_gpu_musa: build（mcc，第 02 期模式复用）+ 同口径 correctness + benchmark + stride 行为探针 diff（台账素材）

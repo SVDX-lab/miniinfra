@@ -1,0 +1,151 @@
+# 第 29 期实验合同：AI 辅助写 Kernel——起草与验收的分工
+question: >
+  用等价 prompt 让 LLM 起草 RMSNorm / 朴素 GEMM / naive decode Attention 的
+  CUDA 实现，再让同一批实现走与本篇人工版完全相同的合同验收（第 01 期合同
+  含非整 Tile/NaN/错误 Shape、第 07 期确定性、第 10 期 sanitizer、第 09 章
+  指标）：AI 版的失败模式集中在哪几类合同条目上？性能达成率离人工版多远？
+  （本期"实现者"= AI，"验收者"= 读者/主 agent；起草来源逐字存档，可复现。）
+hypothesis:
+  - H-A1（正确性）：AI 起草版在块归约组织上出错（跨 warp 归约返回值未广播
+    到全部 warp）——RMSNorm H>32 的行、Attention N>32 的头输出错误；GEMM
+    无块归约不受影响。静态预审 kernel_sim 可先于 GPU 数值复现。
+  - H-A2（非整 Tile）：prompt 已含"任意非负/正整数形状"的中性提示，AI 版
+    边界 guard 写得齐——非整 Tile 缺陷率低于历史 KernelBench 常见水平；
+    真正的形状类缺陷集中在"缩放上限"（Attention dynamic smem N≤12288，
+    N=32768 无法 launch）。
+  - H-A3（错误处理）：prompt 显式列了错误清单，AI 版错误处理齐全（非零退
+    出+明确信息）；但 selftest 自身的检出力有缺口（RMSNorm fp16 分支死比较）。
+  - H-A4（确定性）：AI 版无 atomic、累加序固定，预期全部位级确定——确定性
+    是 AI 起草在 naive 算子上的强项（第 07 期 atomic 误用模式在本期 prompt
+    语境内未被触发）。
+  - H-A5（性能）：GEMM 教科书 tile 16×16 无寄存器分块，显著低于人工版最优
+    （ch18 1024³ FP32 16.64 TF / 0.1290 ms，预计 AI 版慢 3-10×）；RMSNorm
+    标量路径达成率低于人工版向量化路径（ch03 fp16 主形状 P50 0.0225 ms /
+    40.6% 拷贝峰）；decode Attention 因材料化 scores 落 smem + 每 block 串行
+    三遍扫 N，低于人工版 online 版（同形状对照 ch21 decode P50）。
+  - H-A6（fast_p）：三算子正确且快于人工基线的比例 = 0/3（正确性由 H-A1 主
+    导）——若修复归约广播缺陷后复评，比例仍为 0/3（性能差距 H-A5 主导）。
+baseline: ch03 手写 RMSNorm（fp16 主形状 P50 0.0225 ms / Tile 扫描 / 30 组正
+  确性）/ ch18 手写 GEMM（1024³ FP32 最优 32x32x8_reg4x4 = 0.1290 ms =
+  16.644 TF）/ ch21 naive decode Attention（N=2048 B=1 fp16 P50，见
+  benchmark-results-cuda.json decode 条目）。同 fixtures、同比较器、同计时
+  口径对照。
+variant: 每算子单一 AI 起草变体（单次成稿、零修正），对照人工手写版。
+single_variable: 实现来源（AI 起草 vs 人工手写）；语义、fixtures、口径全部
+  同一。
+invariants:
+  drafting_protocol:
+    prompts: [prompts/prompt-rmsnorm.md, prompts/prompt-gemm.md,
+              prompts/prompt-attention.md]
+    prompt_rule: "逐字存档；不含人工版已知技巧（warpSize-generic、smem padding、
+      tile 模板族、online softmax 组织、cudaFuncSetAttribute）"
+    model: "ZCode/GLM（GLM-5.3-Flash），生成 2026-11-21 UTC，见
+      prompts/generation-record.json"
+    no_post_edit: "生成后零修正；缺陷原样进入验收（含起草者自查发现的归约广播
+      缺陷与 selftest 死比较——记录于 process-notes.md，不回写源码）"
+    exposure_note: "起草者读过 ch03/18/21 合同与结论（缓解与声明见
+      generation-record.json.known_baseline_exposure）"
+  operators:
+    rmsnorm:
+      truth_source: ch03 fixtures（30 组 = 6 hidden × 5 rows，CPU FP32 串行真值）
+      math: "y = w * x / sqrt(mean(x^2) + eps)，eps=1e-6，FP32 累加"
+      dtypes: [fp32, fp16]
+      ai_binary: implementations/ai/rmsnorm/ai_rmsnorm
+    gemm:
+      truth_source: ch18 fixtures（8 组形状，CPU FP32 朴素三重循环真值）
+      math: "C = A·B 行主序，FP32 累加（fp16 = io fp16 + 累加 fp32）"
+      dtypes: [fp32, fp16]
+      ai_binary: implementations/ai/gemm/ai_gemm
+    attention:
+      truth_source: ch21 fixtures decode 集（d_n{64,512,2048}_b{1,4}，
+        CPU FP32 真值 + FP64 锚点）
+      math: "GQA decode：HQ=16/HKV=8/D=128，kv=h/2，
+        scale=0.08838834764831845，稳定 softmax，o=Σ p·v"
+      dtypes: [fp32, fp16]
+      ai_binary: implementations/ai/attention/ai_decode_attn
+  fixtures_policy: 复用 ch03/18/21 fixtures，不重新生成；npz 级 SHA256 +
+    逐张量 SHA256 双重对拍（verify_fixtures.py）
+  correctness_shapes:
+    rmsnorm: ch03 全部 30 组（含 H∈{127,129,1023,1025} 非整 Tile）
+    gemm: ch18 全部 8 组（含 4x8x4 手算例与 13x17x11 非整 Tile）
+    attention: ch21 decode 6 组（N∈{64,512,2048}×B∈{1,4}）
+  boundary_cases:
+    rmsnorm:
+      - 全零行（输出该行全零）
+      - NaN 行（该行全 NaN、其余行不受影响）
+      - rows=0（空输出文件 + 退出码 0，不发射 kernel）
+      - H=0（非零退出 + 明确报错）
+      - 文件字节数与形状不符（非零退出）
+    gemm:
+      - M=0 / N=0（空输出 + 退出码 0）
+      - K=0（非零退出）
+      - 13x17x11 非整 Tile（在 correctness_shapes 内）
+    attention:
+      - N 非整块（64/100 类形状已在集合内；selftest 自含 63/127）
+      - kv_len<=0 / batch<=0（非零退出）
+      - N=32768 缩放上限探针（bench 矩阵：预期 launch 失败，记录为
+        AI-SCALING 缺陷类）
+  tolerance:
+    rmsnorm: {fp32: 1e-05, fp16: 2e-02}   # 与 ch03 合同逐字相同
+    gemm: {fp32: 5e-03, fp16: 1.5e-01}    # 记录口径同 ch18（逐项统计不设硬门）；
+                                          # 判级阈值=人工版最差实测的安全放大
+                                          # （ch18 fp32 实测最差 6.1e-5、
+                                          # fp16 0.0681；放大 80×/2.2×）
+    attention: {fp32: 5e-04, fp16: 2e-02} # 与 ch21 合同逐字相同
+  determinism: 同输入重复 3 次输出逐位一致（--run 跑 3 次对拍 out.bin
+    SHA256）；跨运行无 atomic 前提下预期通过
+  timing: AI 二进制内部 cudaEvent 对（与 ch18/21 二进制口径一致）：warmup 后
+    逐样本 record→launch→record、末尾一次同步；报告 P50/P95/mean/min +
+    全样本；理论字节口径与人工版相同（rmsnorm: 读 x + 写 y + 读 w，
+    fp16 = rows*H*4 + H*2 字节（与 ch03 theoretical_bytes 实测口径一致）；
+    gemm: 2MNK FLOPs + 名义字节 (M*K + K*N + M*N)*itemsize（ch18 口径）；
+    attention decode: q+o (2*B*HQ*D*item) + k+v (2*B*HKV*N*D*item)——
+    ch21 unique 口径，kv 4096 B/token/层 fp16）
+  peak_denominators: ch02 实测（4090 拷贝 918.8 GB/s / FP32 55.6 TF / FP16
+    171.63 TF）；达成率双口径（measured 主、spec 对照）
+  sanitizer: 第 10 期四件套（memcheck/racecheck/initcheck/synccheck）全跑，
+    输入用 correctness 第一组形状；synccheck 在 CUDA13/sm_89 已知沉默
+    （ch11 结论）——沉默本身记"无发现"而非"无缺陷"
+  fast_p:
+    definition: "KernelBench 口径小型复刻：fast_p = 正确且 p50 快于基线的
+      问题比例；本期基线=人工手写版同形状同 dtype P50；p=1.0 全集 3 问题
+      （另附 p 分母=6 的 dtype 展开口径）"
+    execution: GPU 阶段（compare_correctness + benchmark 输出直接归约）
+out_of_scope:
+  - MUSA 列起草（可选扩展，S4000 排队验收；本期先交付 CUDA 起草）
+  - AI 版的迭代修复（"AI 起草→验收→反馈→再起草"循环留待番外）
+  - 模型级对照（第 04 期口径）
+correctness:
+  - fixtures SHA256 完整性（npz + 逐张量双对拍，三方复用）
+  - AI 二进制 --selftest 退出码（AI 自己的检出力评估：selftest 结果与
+    真实对拍结果对照 → selftest 检出力缺口表）
+  - kernel FP32/FP16 vs CPU FP32 真值（rmsnorm 30 组 / gemm 8 组×2 dtype /
+    attention 6 组×2 dtype）：max/mean 绝对误差、相对误差、余弦相似度、
+    NaN/Inf 计数、最大误差位置（ch01 比较器口径原样）
+  - 确定性：每算子×dtype 连续 3 次位级一致
+  - 边界：上列 boundary_cases 全部实测（exit code + 输出文件字节数 + 内容）
+  - 静态预审（CPU 侧先行）：stub 语法编译检查、kernel_sim 行为仿真（按
+    block/warp 语义逐行仿真三份 .cu 的算法）、合同逐条静态检查——预审
+    结论与 GPU 实测对照（预审检出率本身是本期指标）
+metrics:
+  - 正确性通过率（按合同条目分类统计）——缺陷归因表（AI 失败模式 × 合同
+    条目：非整 Tile / 归约组织 / aliasing / 错误处理 / 缩放上限 / selftest
+    检出力）
+  - 确定性 3×位级
+  - 性能：P50/P95/mean/min；有效带宽/算力；达成率（双分母）；与人工版同
+    形状 P50 比值（AI/人工）
+  - fast_p（p=1 全集 3 / dtype 展开 6 两口径）
+  - sanitizer 体检四件套结果
+  - 静态预审检出率（预审发现 ∩ GPU 实证 / 预审发现总数；漏检=GPU 抓到而
+    预审未列）
+acceptance_questions:
+  - AI 写 Kernel 的失败模式集中在哪（对照合同条目逐项归因）？
+  - 为什么验收框架比生成器更重要（用本期实测：AI 自查/selftest 检出力 vs
+    合同验收检出力的差）？
+  - 人还需要做什么（起草者 process-notes 与验收缺陷的差集 = 人的工作清单）？
+gpu_plan:
+  cpu: 静态预审全套（本阶段完成）+ fixtures 三方对拍（本阶段完成）
+  one_gpu_cuda: build 三二进制 → selftest 记录 → compare_correctness.py →
+    确定性 3× → 边界全集 → benchmark.py（形状矩阵+AI/人工比值）→
+    sanitizer 四件套 → fast_p 归约 → 结果 JSON 入 results/
+  one_gpu_musa: 本期不执行（MUSA 起草版为可选扩展，另立待办）

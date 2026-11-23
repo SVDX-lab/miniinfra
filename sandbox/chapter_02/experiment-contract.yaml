@@ -1,0 +1,42 @@
+chapter: "02"
+title: 会话状态
+status: implemented
+question: |
+  多轮工具调用如何保留状态？
+hypothesis: |
+  会话级常驻容器能让文件状态与后台进程状态跨命令保留，且第二条命令起省去容器创建开销；
+  每命令新容器只保留文件状态。若常驻模式后台进程不存活、或第二条命令延迟不显著更低，则假设不成立。
+baseline: |
+  每条命令创建新容器（第 01 期语义），同一固定命令序列。
+variable: |
+  每命令新容器（per-cmd）→ 每会话同一常驻容器 + 显式 TTL（per-session）。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  container_constraints: 与第 01 期相同的约束集（两种模式完全一致）
+  workload: |
+    固定序列：写文件 → 启动 busybox httpd(8080) → 访问 localhost → 读文件 →
+    export 环境变量后再次读取
+  ttl_ms: 默认 60000（测试用 1500）
+workload_manifest:
+  - S1 写文件: mkdir -p www && echo hello > www/index.html
+  - S2 后台进程: busybox nc 循环服务 8080（alpine busybox 构建不含 httpd applet，实测后改用 nc）
+  - S3 访问服务: echo | nc -w 2 127.0.0.1 8080
+  - S4 读文件: cat /workspace/www/index.html
+  - S5 环境变量: export FOO=1 后 echo $FOO
+correctness_checks:
+  - 文件状态：两种模式写后均可读
+  - 进程状态：per-session 模式 S3 返回 hello；per-cmd 模式 S3 连接被拒
+  - shell 环境变量：两种模式均不保留（docker exec 每次新 shell）——明确"进程状态≠shell状态"
+  - TTL 到期后容器被回收、状态 expired、exec 被拒绝
+  - stop 后容器与工作区归零
+performance_metrics:
+  - 第二条命令延迟（per-cmd vs per-session，P50/P95）
+  - 空闲常驻内存（docker stats 采样）
+fault_injection:
+  - TTL 到期
+  - 常驻模式下命令超时（本期实现为终止整个容器，粗粒度；精细进程树清理是第 03 期）
+exclusions:
+  - 不做工作区快照/恢复（第 11 期）
+  - 不做多会话调度
+known_risks:
+  - 常驻容器超时处理是粗粒度的（杀整个容器），本期如实记录该限制

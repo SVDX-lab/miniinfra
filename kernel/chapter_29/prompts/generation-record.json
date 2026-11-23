@@ -1,0 +1,53 @@
+{
+  "schema_version": "kernel-chapter30.drafting-record.v1",
+  "episode": 30,
+  "experiment": "AI 辅助写 Kernel——起草与验收的分工（起草阶段）",
+  "model_identity": {
+    "assistant": "ZCode CLI（coding agent）",
+    "underlying_model": "GLM（account:bigmodel-individual-coding-plan / GLM-5.3-Flash）",
+    "identity_note": "如实记录：起草者即本实验代理本身（自我起草）。模型版本字符串取自运行环境账户标识；无独立训练 cutoff 元数据可查询，故以生成日期锚定。",
+    "generation_date_utc": "2026-11-21",
+    "generation_window_utc": ["2026-11-21T09:55Z", "2026-11-21T10:25Z"]
+  },
+  "protocol": {
+    "prompt_first": "三个 prompt 先于实现逐字存档（prompts/prompt-*.md），prompt 内不含本课程已知的实现技巧（warpSize-generic 写法、smem padding、tile 模板扫描、online softmax 组织等）。",
+    "no_post_edit": "实现写出后零修正（包括发现的缺陷）——原样进入验收流程。起草者事后观察只记入 process-notes.md，不回写源码。",
+    "single_shot": "每算子单次成稿（无多轮修订/无重新生成）。",
+    "equivalence_note": "三份 prompt 结构等价（语义/交付物/CLI/正确性要求/计时要求五段），由起草者自行设计；等价性指任务结构等价，非文本逐字相同。"
+  },
+  "artifacts": {
+    "prompt-rmsnorm": {
+      "path": "prompts/prompt-rmsnorm.md",
+      "sha256": "3fe044dda4872dc47241ab59ba2373cddf98e8c6ccd454440b8e9858bd3f0d12"
+    },
+    "prompt-gemm": {
+      "path": "prompts/prompt-gemm.md",
+      "sha256": "9333f26ba49d48e672a19f0eb4f3e547d31f0ddccd18d15bd1723324d9db32de"
+    },
+    "prompt-attention": {
+      "path": "prompts/prompt-attention.md",
+      "sha256": "3097cb7a63537d4b0c6ed2d4de1eae53becc2068a1f1a06f987ca2516a2963c6"
+    },
+    "ai_rmsnorm.cu": {
+      "path": "implementations/ai/rmsnorm/ai_rmsnorm.cu",
+      "sha256": "7e664e987472eccb4993dcdad34f0e7cde5782739c8b8ec3f576e7dee154eaa4"
+    },
+    "ai_gemm.cu": {
+      "path": "implementations/ai/gemm/ai_gemm.cu",
+      "sha256": "3073743cd256b9f1d93934006141640cd560412ebb453b2a6b0a7287d7d44ee7"
+    },
+    "ai_decode_attn.cu": {
+      "path": "implementations/ai/attention/ai_decode_attn.cu",
+      "sha256": "dd17693e1ce8a90dd03805c448520bf14681d1709d6c39f847d89d17b07fe24d"
+    },
+    "build_scripts": {
+      "rmsnorm": "9a233c46229be1e7bb01d82514cea4a9836aa710b09fbfcb0e61dc32c41896e5",
+      "gemm": "962115f0db1e32c17d93705850b4ec5028901215257e22b1f9c9905f273aee06",
+      "attention": "3873e6f36fd3e1d77e4338cf3cf6d733df497b0fa694782146d7961fb1b6ebe6"
+    }
+  },
+  "known_baseline_exposure": {
+    "declaration": "起草者读过本课程 ch03/18/21 的 README、合同与 EXPERIMENT_LOG（设计验收方案所需），因此严格意义上不是零知识起草。缓解措施：(1) prompt 信息环境受控——所有 prompt 未写明的技巧一律不使用；(2) 起草时按'只读 prompt 的实现者'角色成稿，不主动移植人工版的组织（人工版的 tile 模板族、smem padding、warpSize 双实例、grid-stride 多行均未移植）；(3) 该暴露本身作为实验边界记入 EXPERIMENT_LOG，缺陷归因解读时考虑此因素。",
+    "not_transplanted": ["warp shuffle+shared 的 waprSize-generic 双实例", "smem padding 消 bank conflict", "tile 配置族模板扫描", "grid-stride 多行负载", "online softmax 分块推进", "cudaFuncSetAttribute 大 smem opt-in"]
+  }
+}

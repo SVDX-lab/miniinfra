@@ -1,0 +1,67 @@
+question: GPU 上的 Launch 开销能用 Graph 砍掉多少？砍掉的开销如何归因到"kernel 串行间隙 / launch 税 / framework 调度"三层？MUSA Graph 为何在 ch01/ch02 实测中负收益（M-02 根因）？Graph 与第 03 期融合两条路各自砍哪一段、为何推理引擎都内置 Graph？
+hypothesis:
+  - eager 单 op 发射吞吐 = CPU 侧 dispatch+发射的吞吐地板（CUDA 9.3µs / MUSA 16.7µs，ch02 契约 v2）；Graph 回放把 N 次 kernel 发射折叠为 1 次 cudaGraphLaunch/musaGraphLaunch，launch-bound 区收益 ≈ (N-1)×发射税。
+  - 正常 Shape（单 kernel 时间 >> 发射税）下 Graph 收益显著缩小（应 ≤5%），验证 launch-bound 边界；2048×1024 RMSNorm 与 Qwen3 单步 decode 两档实测。
+  - Graph 有代价：捕获/实例化一次性成本（新 Shape/Batch 需重新捕获）+ graph 私有内存池显存驻留。
+  - M-02 根因假设：MUSA Graph 回放存在 per-replay 固定成本或 per-node 边际成本过高（ch02：1-op 图回放 25.5µs/op > eager 发射 16.7µs/op）——用 replay_span(K)=intercept+slope×K 拟合 {1,8,64}×{小,中,大} 矩阵拆出固定/边际两项，并与 CUDA 同矩阵对照。
+  - 三级阶梯归因：eager native → +融合op（砍"多余 kernel 执行+其发射槽"）→ +Graph（砍"剩余发射税+framework 调度"）；ep05 未决 1（CUDA 兑现率 1.32）用图内/图外对照复核"微基准求和上限非严格上限"。
+baseline:
+  - chapter_01/performance/results/launch-bound-{cuda,musa}.json（契约 v2：发射吞吐 9.331/16.728µs，sync 往返 20.197/90.768µs，分界 CUDA≤4M / MUSA≤1M 元素）
+  - chapter_01 M-02：MUSA Graph Replay 0.30ms 慢于 eager 0.17ms @2048×1024（CUDA 相反快 3.5×）
+  - chapter_04：注册 op 微基准收益足额/超额兑现（MUSA 兑现率 0.99 / CUDA 1.32）；launch+event 地板 MUSA ~28µs（M-12）
+  - 拷贝峰值分母：4090 918.8 GB/s / S4000 711.3 GB/s（ep02 实测，带宽对账用）
+variant: 同一实验脚本 × 后端（cuda / musa）；本期**无 CPU 列**（期首声明：Graph 是设备侧调用组织概念，CPU 无发射可砍）；平台可用性探测本身是实验内容（MUSA 列）。
+single_variable: 调用组织方式（eager 逐 op 发射 vs Graph 整段录制回放）与算子组织方式（原生组合链 vs 融合 op），其余（权重、shape、dtype、同步边界）逐项冻结。
+invariants:
+  measured_object: "y=x+1.0 逐元素链（ch02 场景复用）/ 手写 Qwen3-0.6B 单步 decode（ch05 可切换模型）/ 注册融合 op fused_add_rmsnorm（ch05 注册版）"
+  performance_dtype: FP16（GPU，两平台统一）
+  decode_step:
+    model: chapter_01/models/qwen3-0.6b（两台服务器已就位）
+    prompt: chapter_01/truth/truth-manifest.json prompt_token_ids（20 token）
+    graph_capture_seq: 51（prompt 20 + 31 生成步后的定长步；Graph 要求静态 shape，取定长单步测稳态）
+    batch: 1
+    graph_region: embed→28 层→final norm→lm_head→argmax（logits+next token 全在图内）
+  launch_bound_scenario:
+    operation: "t.add_(1.0) 原位链（静态 buffer，无捕获期分配），y=x+1.0 语义"
+    elements_ladder: [16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864]
+    chain_lengths_K: [1, 8, 64]
+    classification_rule: "ch02 契约 v2 原样复用；新增 replay_span(K) 线性拟合（intercept=per-replay 固定成本，slope=per-node 边际成本）"
+  normal_shape_spot:
+    rmsnorm: rows=2048 × H=1024 FP16（ch05 composite_chain_operation 同语义）
+    fused_op: rows=2048 × H=1024 FP16 注册 op 单 kernel eager vs graph
+  timing:
+    eager: 事件对（OperatorTimer，ch01 口径）+ sync-per-step（decode 口径）双记
+    graph: replay 事件对跨度 + replay CPU dispatch（enqueue_wall_us）双记
+    capture_stages: capture+instantiate / first replay / steady replay 三段
+  memory_residency: torch memory_stats 的 reserved/allocated 差分（capture 前后、共享 pool vs 私有 pool、逐 recapture 累计）
+  profiler:
+    cuda: nsys（--trace=cuda,nvtx，尝试 graph trace 看图内 kernel 实例；ncu 被宿主禁用 KI-02-02 延续）+ kineto（torch.profiler）kernel 时长求和
+    musa: 无设备侧 profiler（M-04 平台边界延续）→ 用 Graph 残差法（图回放跨度 ≈ kernel 执行和）+ 端到端对账
+  fixtures_seed: 20261121（spot-check 张量与 decode 输入固定 seed 落盘 + SHA256 清单）
+  graph_correctness: 图回放输出 vs eager 输出（同设备同权重）按 ch01 comparison_metrics 口径；decode 步额外比对 argmax next token 一致性
+out_of_scope:
+  - KV Cache / 增量 decode（第 21 期起；本期 decode 步沿用 ch01 口径的整段重算，Graph 定长捕获）
+  - CUDA Graph 节点级手工 API 原生建图（cudaGraphAddKernelNode 等）——torch.cuda.CUDAGraph 流捕获单路径，选择理由记录于 README
+  - 多卡 / 多 stream 图（M-10/M-28 平台边界：MUSA 侧流 API 头不可用，单流语义）
+  - 动态 shape 图（条件节点/if 分支）——静态 shape 捕获 + 显式 recapture
+correctness:
+  - 图回放输出 vs eager 输出（launch-bound 链 / RMSNorm spot / decode logits+next token 三类全覆盖）
+  - 融合 op 注册路径沿用 ch05 回归（torch.ops 路由正确性由 ch05 证据背书，本期不重复注册正确性矩阵）
+  - decode Greedy 首 token 与 ch01 truth first_token_id 对照（模型列 sanity）
+metrics:
+  - 每次 launch 税（eager per-op − graph per-op）@ 12 尺寸梯子
+  - replay_span(K) 线性拟合 slope/intercept（两平台 × 3 shape）
+  - capture+instantiate 耗时 / first replay / steady replay dispatch（µs 级）
+  - 三级阶梯（eager native / eager fused / graph native / graph fused）P50 与差分归因
+  - CPU 侧 dispatch 总耗时（enqueue-only wall）eager vs graph replay
+  - 发射数证据：kineto cudaLaunchKernel 计数（eager）vs 图回放 API 计数
+  - graph pool 显存驻留字节（私有/共享 pool，逐 recapture 累计曲线）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB（torch 2.12.1+cu130）+ 1×MTT S4000 48GB（torch 2.11.0.post1 + torch_musa 2.11）
+  model_policy: Qwen/Qwen3-0.6B 固定内容（chapter_01 models/MANIFEST.json 哈希背书）
+  common_benchmark_profile: launch-bound 12 尺寸 × K{1,8,64}；decode@seq51 batch1 FP16；RMSNorm spot 2048×1024
+  source_compatibility_sample: implementations/{cuda,musa}/ 实验脚本逐文件 diff 分类 + MUSA 列 Graph API 探测（musaGraph* 头文件/符号证据）
+gpu_plan:
+  cpu: 无 CPU 列（期首声明）；本地仅做脚本 import 级检查与 decode 逻辑 CPU 正确性调试（torch CPU eager，无 Graph）
+  one_gpu_cuda: graph probe → smoke → launch-bound 图化全梯 → decode 阶梯四态 → recapture/显存 → nsys graph trace（单锁多批）
+  one_gpu_musa: graph probe（API 探测=实验）→ 矩阵 {1,8,64}×{3 shape} → 阶段拆解 → 可用实验同构跑 → 台账 M-02 结论

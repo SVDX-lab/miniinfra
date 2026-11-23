@@ -1,0 +1,36 @@
+chapter: "05"
+title: 文件与产物
+status: implemented
+question: |
+  工作区怎样隔离和交付？
+hypothesis: |
+  "不可变输入(只读挂载) + 会话工作区 + 显式产物导出"相对"单一可写目录 + 每会话拷贝输入"
+  能以零拷贝获得输入、保证跨会话写入互不影响、导出只含允许路径且带校验和。
+  若两种布局出现交叉污染或导出逃逸，则假设不成立。
+baseline: |
+  单一可写目录（flat）：create 时把共享输入树拷贝进会话工作区（此前各期语义的延伸）。
+variable: |
+  structured 布局：共享输入树以只读 bind 挂载到 /inputs，
+  /workspace 私有可写，新增 export API 把白名单路径拷贝到导出区并记录 sha256。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  会话模式: per-session + tree 取消 + loose 配额（第 02–04 期语义不变）
+  共享输入树: 32 MiB 确定性 input.dat（种子固定）+ input.txt（含种子与哈希）
+correctness_checks:
+  - 两会话同用基础输入：写入互不影响（flat=各自拷贝隔离；structured=只读+私有工作区）
+  - structured：向 /inputs 写入被拒绝（EROFS），读取正常
+  - 导出只包含白名单路径；导出区无越权文件
+  - 符号链接逃逸（ln -s /etc/passwd、相对路径 ../）被 export 拒绝
+  - 并发写入同名文件：两个会话导出的校验和不同且各自正确
+performance_metrics:
+  - create 延迟（flat 拷贝 32MiB vs structured 零拷贝挂载）
+  - 导出 16 MiB 产物耗时与校验和
+  - 每会话磁盘占用
+fault_injection:
+  - 符号链接与相对路径逃逸
+  - 并发写同一相对路径
+exclusions:
+  - 不做网络文件系统/远端产物上传（第 16 期只做本地下载）
+  - 不做快照/恢复（第 11 期）
+known_risks:
+  - bind 挂载语义在 WSL2 上与其他内核一致（overlay/ext4），但绝对数字仅适用本机

@@ -1,0 +1,107 @@
+# 第 25 期实验合同：DeepSeek DSA——Lightning Indexer 与稀疏注意力
+
+question: >
+  DeepSeek DSA 的"Lightning Indexer + top-k + 稀疏 gather Attention"能否按 §9
+  新结构规则严格验证（给定索引集时与子集 dense Attention 逐位对照、索引器与
+  参考实现对照、空集与非整块单独记录）？索引器开销占总时长比例如何随 N×k 变化？
+  "稀疏度 k—误差—延迟"三元关系曲线形态如何（k 多大误差开始塌）？dense O(N²)
+  与 DSA O(N·k+索引) 的纸面对比（附录 B 题 10 校核，N=128K、k=2048）能否与
+  实测互相校核？
+
+hypothesis: >
+  给定索引集时稀疏 gather Attention 与子集 dense Attention 数学等价（误差在
+  FP32/FP64 锚点量级）；索引器开销占比随 N 线性增长、随 k 递减——N=65536 时
+  即使 k=4096 索引段仍占主口径 ~50%+（naive 核）；误差随 k 在 k≈支撑集
+  （合成设定 S(n)=max(256, round(0.025n))）处出现膝点；计算量对比：Design B
+  （索引 K 缓存，官方对齐）DSA ≈ dense 的 0.49× MAC / 0.25× 字节（N=128K、
+  k=2048），Design A（重算 k_I）4.25× MAC / 1.13× 字节——全部反噬，证明索引
+  K 必须独立缓存。
+
+baseline: >
+  dense full attention（同一份 MLA 吸收核跑全部 N 个 token；CPU FP32 torch
+  eager 参考链 + FP64 锚点；CUDA identity 模式同核对照 + torch eager bmm 链）。
+
+variant: >
+  DSA decode 步：Lightning Indexer（64 头×128 维，ReLU 加权分数，FP32）→
+  阈值法 top-k（naive，k=min(k,N)）→ 稀疏 gather Attention（ep25 吸收核骨架 +
+  索引间接寻址，split-K 两 kernel）。CUDA 另有 Design A 代理（k_I 重算 GEMM）。
+
+single_variable: 稀疏检索结构（dense vs DSA）；权重、输入、cache、scale 全部
+  同一份（同一合成权重序列用于误差与延迟）。
+
+invariants:
+  config: 主 Attention = DeepSeek-V2-Lite 公开维度（与 ep25 完全一致，跨期
+    对照）；索引器 = DeepSeek-V3.2-Exp 公开维度
+  config_source:
+    main_attention: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/raw/main/config.json
+    indexer_config: https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp/raw/main/config.json
+      （index_n_heads=64, index_head_dim=128, index_topk=2048, q_lora_rank=1536）
+    indexer_formula: https://github.com/huggingface/transformers/blob/main/src/transformers/models/deepseek_v32/modeling_deepseek_v32.py
+      （Indexer 类：wq_b/wk/weights_proj、softmax_scale=index_head_dim**-0.5、
+      relu、权重×n_heads**-0.5、token 级 topk=min(index_topk, seq_len)、int32）
+    index_k_cache: https://vllm.ai/blog/2025-09-29-deepseek-v3-2（独立索引 K 缓存）+
+      SGLang Day-0 帖（dedicated key & key_scale cache）
+    fetched_at: 2026-11-21
+  config_values:
+    d_model: 2048            # hidden_size（V2-Lite；V3.2 为 7168，头数规模差异声明）
+    n_heads: 16              # num_attention_heads（V2-Lite；V3.2 为 128）
+    q_lora_rank: 1536        # V2-Lite null → V2/V3.2 的 1536（ep25 同款混合口径；
+                             #   恰与 V3.2 config 一致，索引器 wq_b 输入同源）
+    kv_lora_rank: 512
+    qk_nope_head_dim: 128
+    qk_rope_head_dim: 64
+    v_head_dim: 128
+    num_hidden_layers: 27    # V2-Lite；V3.2=61（模型级外推用）
+    index_n_heads: 64        # V3.2 公开值
+    index_head_dim: 128      # V3.2 公开值
+    index_topk_default: 2048 # V3.2 公开值
+  scales:
+    softmax_scale: 1/sqrt(192)   # 主 Attention（官方 q_head_dim**-0.5，ep25 同源）
+    index_scale: 1/sqrt(128)     # 索引器（官方 index_head_dim**-0.5；scale>0 不改
+                                 #   ReLU 后排名，只为分数绝对量级对齐官方）
+    index_weight_scale: 1/sqrt(64)  # 头权重 ×n_heads**-0.5（HF Indexer forward 同式）
+  synthetic_declarations: # 无法确证的实现细节，显式声明为合成设定
+    - "索引路径省略 LayerNorm 与 RoPE（官方 k_norm+位置相关 k 缓存排布未逐行确证）"
+    - "索引 K 来源：官方 wk 输入 hidden_size(7168) 且独立缓存；本实验 cache 直接
+       合成 latent（ep25 同款），用合成投影 W_KL latent(512)→128 生成 k_I——重算
+       成本的乐观下界代理"
+    - "检索质量：真实系统来自训练；本实验用 planted relevance 注入受控检索质量
+       （三档 z 分层，等化方向 v*=Q^T(QQ^T)^-1·1 保证 16 头投影一致），结论只覆盖
+       '给定检索质量水平下 k—误差—延迟的形态'"
+  planted_relevance:
+    support_rule: "S(n) = max(256, round(0.025·n))；三档 6.25%/18.75%/75%"
+    z_tiers_main: [9.4, 8.2, 6.9]     # 相对分数噪声 std 的自校准 z
+    z_tiers_index: [10.0, 8.8, 7.5]
+    target_mass: "背景 ≈2%、strong/medium/weak ≈33/31/35%（实测 verify）"
+  weights: 合成权重 torch.randn 固定 seed × He 缩放（fan_in=收缩维输入维度，
+    2-D 用 shape[0]、3-D per-head 用 shape[1]；与 ep25 的 shape[0] 通配差异已
+    在 dsa_reference.make_weights docstring 声明——ep25 偏热不影响等价性结论，
+    ep26 需要正确的 softmax 噪声单位）
+  truth_dtype: FP64（CPU einsum 链，代数锚点）+ FP32（CPU 主链，真值锚点）
+  performance_dtype: FP16（CUDA 公共性能路径，fp32 片上累加）
+  fixtures_seed_base: 20260326
+  fixtures: correctness.npz（276 张量，含 planted cache/真值/给定索引集）+
+    manifest 逐张量 SHA256；npz 为跨机器共享真值，verify-only 为数值复核
+    （容差 2e-4，覆盖跨 torch 版本 GEMM 舍入）而非 SHA
+  correctness_shapes: N ∈ {1, 3, 33, 127, 128, 2048}；索引集 ∈ {strided 等距,
+    identity 全集, single 单点, random×3（各 33 点）}；k ∈ {0,1,7,33,127,256,N}
+  benchmark_shapes: N ∈ {4096, 16384, 65536} × k ∈ {256, 512, 1024, 2048, 4096}
+  timing: ch01 口径（P50/P95，事件对/末尾同步一次）；CUDA warmup=3 repeats=10，
+    CPU warmup=2 repeats=5（CPU 为参考实现计时，声明）
+  indexer_overhead_definition: ratio = (indexer_score + topk) / (indexer_score +
+    topk + sparse_attention)（Design B 主口径）；Design A（k_I 重算 GEMM）单列
+  topk_implementation: naive 阈值法（fp32→uint32 单调键 + 32 步二分 count +
+    确定性 compact，~35 launch/次）；torch.topk 单列对照
+  error_definition: sparse（k 个选中）vs dense full attention（全部 N，FP32
+    参考，同一合成权重序列）；另记 vs dense-fp16kernel 分离数值噪声
+  determinism: 无 atomics 除交换律整数 count；3 次连跑位级一致入结果
+  platform_peaks_denominator: chapter_01/performance/results/peak-measurement-cuda.json
+    （D2D 918.8 GB/s、FP16 171.63 TF）；4090 L2=72MB（ep03 C-API 实测），
+    每个扫描点标注工作集 L2/DRAM 分区
+  l2_regime_note: N=4096/16384 的 dense 核工作集（4.7/18.9MB）在 L2 区、N=65536
+    （75.5MB）在 DRAM 区；索引器 score 核工作集（≤17MB）全部 L2 区——带宽
+    达成率解读必须分区（ep03/ep25 教训）
+  appendix_b_note: 附录 B 题 10（v4 文档行 1270，DSA 计算量条）为本期校核对象；
+    任务书行 1082 写"题 9"为编号错位（ep25 同款：v4 §13 引用比附录 B 小 1）
+  out_of_scope: prefill 路径、跨层索引器复用摊销、fp8 索引缓存量化、CSA/HCA
+    （仅纸面注记）、MUSA 列（待补，见 implementations/musa/MUSA_TODO.md）

@@ -1,0 +1,69 @@
+# 第 13 期实验合同：Triton/DSL 跨后端算子路径——换走了多少控制权、留下了多少性能
+question: 同一 RMSNorm/融合算子用 Triton DSL 表达时，与第 02/03 期手写版的差距是多少、差在哪个环节；triton.autotune 离手动扫描的全局最优多远；MUSA 侧 Triton 后端的真实形态是什么？
+hypothesis: ① CUDA 侧 Triton 版可达手写版同量级（SP 写法贴 90%+ 手写最优），但失去 shared-memory 行缓存控制，非 DRAM 区（L2 驻留）可能落后；② autotune 在同空间内找到的配置接近全局最优（问题简单、空间小），但搜索开销 >> 手动扫描（编译每配置一次）；③ MUSA 侧 Triton 形态待实机探测（准入第 7 条：本实验首要产出）——若 OSS triton 3.2.0 不含 MUSA 后端则记平台边界并给出证据链。
+baseline: 第 02 期手写 RMSNorm（CUDA tile 扫描最优 fp16→512/fp32→128；MUSA fp16→128/fp32→256）+ 第 03 期手写融合（fused 达成率 CUDA 99.4%@DRAM / MUSA 91.4%@DRAM）+ ch02 拷贝峰值口径。
+variant: Triton SP 版 / Triton looped 版 / Triton autotune 版 / Triton fused 版（CUDA 与 MUSA 同源码）。
+single_variable: 实现路径 = DSL（Triton）vs 手写 CUDA/MUSA C++（语义、Shape、dtype、计时口径全部对齐主线合同）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（仅 hidden_size=1024 语义相关，本期不做模型级对照）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（复用 ch03/ch04 CPU 串行真值，fixtures 单源跨机共用）
+  fixtures: chapter_02/fixtures（RMSNorm 30 组，seed 20260301）+ chapter_03/fixtures（融合 30 组，seed 20260528 系）——SHA256 校验后引用，不重新生成
+  performance_dtype: FP16（主口径）+ FP32（对照）
+  correctness_shapes: {hidden_size: [127,128,129,1023,1024,1025], rows: [1,4,128,512,2048], combos: 30}
+  benchmark_shapes: {rows: [1,4,128,512,2048], hidden_size: 1024}；DRAM 区 rows fp32 [16384,32768] / fp16 [32768,65536]
+  tile_scan: {blocks: [64,128,256,512,1024,2048], main_shape: {rows: 2048, hidden_size: 1024}, spot_check: {hidden_size: [127,129]}}
+  timing: 事件对 + 末尾一次同步（ch01 OperatorTimer 原口径）；Graph Replay 口径并列；达成率分母 = ch02 实测拷贝峰值（cuda 918.8 / musa 711.3 GB/s），规格值另存对照列
+  cpu_column: 缺席（期首声明）——DSL 不面向 CPU，Triton 无 CPU 后端参与本实验；真值仍由 CPU 串行实现生成（ch03/ch04 fixtures），缺席的是"CPU 上的 DSL 被测路径"而非真值列
+operator_contract:
+  math: "y_i = w_i * x_i / sqrt(mean_j(x_j^2) + eps)；平方和与均值 FP32 累加；归一化与权重乘法 FP32，写回一次舍入到 T"
+  input_shape: "[rows, H]，H ∈ [127, 2048]（SP 路径要求 BLOCK=next_pow2(H)）；行数任意（grid=(rows,)）"
+  weight_shape: "[H]，与 x 同 dtype"
+  output_shape: "[rows, H]，与 x 同 dtype"
+  stride: 只接受连续输入（非连续显式报错，同 ch03 合同）
+  aliasing: RMSNorm 无 aliasing；fused 版 r buffer 原位更新为 T(r+h)（ch04 in-place 语义）
+  accumulation_dtype: FP32（tl.sum 块内树形归约；归约顺序由编译器决定——与手写 warp 蝶形的对照素材）
+  tile: "SP: BLOCK=next_pow2(H) 编译期常量；looped: BLOCK ∈ [64, 2048] 任意（for off in range(0,H,BLOCK) 设备循环，Pass 2 重读 x——手写版 shared 行缓存的 DSL 不可控对照点）"
+  shared_memory: "Triton 不可显式控制（编译器分配）；SP 路径行数据驻留寄存器"
+  empty_tensor: "H=0 显式报错；rows=0 返回空 Tensor 不发射"
+  extreme_values: 同 ch03 合同（FP16 平方和 FP32 不溢出；全零行输出全零；NaN 按行传播）
+  error_behavior: Shape/dtype/连续性显式报错；Triton 无"非法 tile"概念（mask 任意覆盖）——ch03 的 invalid-tile 边界项由"BLOCK<H 循环正确性"替代验证
+  determinism: 同配置同输入位级可复现（固定归约树）；跨配置（BLOCK/num_warps 不同）归约树不同可能位级不同
+  numerical_tolerance: FP32 max_abs <= 1e-5（rsqrt 近似 + 树形归约顺序）；FP16 max_abs <= 2e-2
+performance_model:
+  theoretical_bytes_rmsnorm: "(rows*H*2 + H) × itemsize（读 x + 写 y + 读 w）"
+  theoretical_bytes_fused: "(rows*H*4 + H) × itemsize（读 r 读 h 写 y 写 r 原位 + 读 w）——ch04 口径"
+  latency_lower_bound: 理论字节 / 平台实测拷贝峰值
+  compute_intensity: ~2 FLOP/元素 => memory-bound（与 ch03 同一结论域）
+dsl_surface:
+  kernel_lines_triton: "<100 行（SP+looped+fused 三 kernel，对照 ch03 kernel .cu 301 行 + ch04 融合 ~300 行 + 构建脚本）"
+  build_steps_triton: 0（无编译脚本；JIT 首调即编译）
+  build_steps_handwritten: "nvcc/mcc + build.sh +（ch03 路径）cpp_extension/musa_extension 构建器"
+  host_code: Python dict 配置（autotune Config）vs 手写 C++ dispatch 表
+  control_given_up: shared memory 布局、warp 级归约原语、向量化宽度选择、grid-stride 策略、launch 边界
+  control_kept: BLOCK（=Tile）、num_warps、每 program 负责的行数（grid 映射）、mask 语义
+experiment_matrix:
+  backend_probe: 包层/import 层/driver 层/编译层/正确性五层取证（triton_probe.py）
+  correctness: 30 组 × {fp32,fp16} × {SP, looped-B256, autotune} + fused 30 组 × 2 dtype + residual in-place 位级
+  benchmark: 主口径 5 行 × 2 dtype × {SP, 手写} + tile 扫描 6 BLOCK + DRAM 区 + fused 三路对照（triton 融合/triton 分离/torch eager 分离 [+ 手写融合]）
+  autotune: parity(5)/wide(24)/SP(8) 手动 vs autotune 同空间三组 + do_bench 口径交叉
+  artifacts: 冷/热编译时间、asm dict 全 key 枚举（ttir/ttgir/llir/ptx/cubin 或 MUSA 对应物）、nvdisasm SASS（CUDA）
+  paper: Triton 下降流程（Python→TTIR→TTGIR→LLVM IR→PTX/ISA）与 MUSA 编译链对应关系（实机探测到的中间表示取证；取不到记边界）；DSL 生态现状（信息时点标注）
+out_of_scope:
+  - TileLang-MUSA / muLang 实装（纸面调研，不实机）
+  - CuTe DSL / ThunderKittens 系统实验（番外候选）
+  - torch.compile 自动融合（第 14 期）
+  - bf16/int8 路径
+metrics:
+  - 延迟 P50/P95/mean/min；有效带宽；达成率（vs ch02 拷贝峰值）；DSL/手写延迟比与达成率比
+  - 代码行数比与开发耗时（分段墙钟：import→首 kernel 跑通）
+  - autotune：搜索空间、搜索耗时、选中配置、与手动最优差距比
+  - 编译：冷/热缓存时间、重编译代价、缓存产物清单
+  - nsys：Triton kernel 可见性、launch 数证据（CUDA）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090（torch 2.12.1+cu130, Triton 3.7.1）+ 1×MTT S4000（torch 2.11.0+torch_musa, Triton 3.2.0 待探测形态）
+  musa_backend_policy: 探测定形态——(a) OSS triton 直支持 MUSA / (b) triton_musa 包 / (c) 不可用（平台边界 + 全量证据）；kernel 源码跨平台逐字相同，差异面收窄到 import 与编译链
+gpu_plan:
+  cpu: 无 DSL 被测路径；仅 fixtures 校验与文档（本地）
+  one_gpu_cuda: probe → smoke → correctness → benchmark（含手写同会话对照）→ autotune → artifacts → nsys
+  one_gpu_musa: probe（MUSA 后端形态，首要）→ 迁移版定稿 → smoke → correctness → benchmark → autotune → artifacts（MUSA 对应物取证）

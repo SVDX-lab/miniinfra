@@ -1,0 +1,43 @@
+chapter: "06"
+title: 网络出站
+status: implemented
+question: |
+  如何限制出站访问？
+hypothesis: |
+  任务级出站策略（沙箱置于无外联内网 + 边界外转发代理按允许列表放行）
+  能做到：允许的目的地可达、未列目的地/元数据地址被拒、伪造 Host 头不能绕过、
+  目标 IP 变化后仍按域名正确放行。全断网组则一律不可达。若伪造头可绕过或拒绝失效，则假设不成立。
+baseline: |
+  全断网（--network none，第 01 期以来的安全起点）。
+variable: |
+  任务级出站允许列表：沙箱接入 internal 网络（无外联），
+  出站必须经边界外代理（dual-homed 容器），代理按 (host, port) 允许列表解析并转发。
+fixed:
+  image_sandbox: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  image_proxy_origin: python:3.12-alpine@sha256:0687a6bc9716edc2a6ee0fbfb0f87e7ee358b262b67c9215de91bc9b2d38ba71
+  其余约束: 与第 05 期一致（ro rootfs、cap-drop、配额 loose、tree 取消）
+  topology: |
+    mis-c06-net（bridge，可 NAT 外联）：allowed-origin、denied-origin、proxy
+    mis-c06-int（internal，无外联）：沙箱会话 + proxy 第二网卡
+  policy: data_local/policy.json（版本号随内容变化，拒绝响应带版本）
+workload_manifest:
+  - R1 允许请求: http://allowed-origin/health（预期 200 OK-ALLOWED）
+  - R2 拒绝请求: http://denied-origin/health（预期 403 + policy_version）
+  - R3 元数据地址: http://169.254.169.254/latest/meta-data（预期 403）
+  - R4 伪造 Host: nc 原生请求 URI=denied-origin、Host=allowed-origin（预期 403）
+  - R5 DNS 变化: 重建 allowed-origin 容器（换 IP）后再请求（预期仍 200）
+  - R6 断网组: network none 下任意请求（预期连接错误）
+correctness_checks:
+  - R1..R6 各自预期成立
+  - 拒绝响应携带 policy_version，策略可审计
+performance_metrics:
+  - 经代理请求延迟 vs 内网直连同源延迟（近似代理路径额外开销）
+fault_injection:
+  - 伪造 Host 头
+  - 目标容器重建（DNS/IP 变化）
+exclusions:
+  - 不实现 TLS/CONNECT 隧道（教学仅明文 HTTP）
+  - 不做宿主侧 iptables 防火墙对照（主线用代理模型；iptables 属宿主责任，见 field-map）
+  - 不拒绝 RFC1918 内网段（课程假源就在内网段；生产应拒绝并含元数据段）
+known_risks:
+  - 生产必须叠加宿主侧网络策略（代理不是唯一防线）；Firecracker 亦然（见第 14 期）

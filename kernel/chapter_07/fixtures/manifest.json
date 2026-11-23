@@ -1,0 +1,475 @@
+{
+  "schema_version": "kernel-chapter08.fixtures.v1",
+  "seed_base": 20260801,
+  "rng": "numpy default_rng (PCG64)，输入 standard_normal float32",
+  "eps": 1e-06,
+  "truth_implementation": "naive_rmsnorm_serial (FP32 CPU, 逐行逐元素自然顺序累加——确定性参照系)",
+  "hidden_sizes": [
+    127,
+    128,
+    129,
+    1023,
+    1024,
+    1025
+  ],
+  "row_counts": [
+    1,
+    4,
+    128,
+    512,
+    2048
+  ],
+  "combos": [
+    {
+      "rows": 1,
+      "hidden_size": 127,
+      "seed": 20360928,
+      "weight_seed": 20260928,
+      "serial_generation_ms": 0.2,
+      "row0_sqsum_serial": 105.98284912109375,
+      "row0_sqsum_pairwise_tree": 105.98284912109375,
+      "row0_sqsum_bit_identical": true,
+      "sha256": {
+        "x": "b6c132151131fbe7d2b9e33f321321ae03859eb5499203ba9119ad5b8a012b59",
+        "w": "65a95a55ad5129f191c3a1a3e6de3cacb422dd980ef7b6e6a743edbcc7b6a6c1",
+        "y": "ddd6e4f322bc14216b679df28f46408c16626e3242c5cba9f69c69ebeb2cc261"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 127,
+      "seed": 20660928,
+      "weight_seed": 20260928,
+      "serial_generation_ms": 0.5,
+      "row0_sqsum_serial": 138.8426971435547,
+      "row0_sqsum_pairwise_tree": 138.84274291992188,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "54eb3d640dc793b43b20566b680eb0a2da79864a8fec4cadd62d5298ff1a70ed",
+        "w": "65a95a55ad5129f191c3a1a3e6de3cacb422dd980ef7b6e6a743edbcc7b6a6c1",
+        "y": "45f06720ead8daff5fba3b2d5555c34576eb658db015f3af7689ae7277766cb7"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 127,
+      "seed": 33060928,
+      "weight_seed": 20260928,
+      "serial_generation_ms": 16.9,
+      "row0_sqsum_serial": 107.56690979003906,
+      "row0_sqsum_pairwise_tree": 107.56690979003906,
+      "row0_sqsum_bit_identical": true,
+      "sha256": {
+        "x": "54bc8e5de06bdd53145fbdf8b2a2896604b2a9c81908962d83b2c1c505311fc0",
+        "w": "65a95a55ad5129f191c3a1a3e6de3cacb422dd980ef7b6e6a743edbcc7b6a6c1",
+        "y": "4b51b734820483def4a3160aa6ef22e20f5ff60dbb3384d3d9d6823b5a49b816"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 127,
+      "seed": 71460928,
+      "weight_seed": 20260928,
+      "serial_generation_ms": 68.0,
+      "row0_sqsum_serial": 137.65423583984375,
+      "row0_sqsum_pairwise_tree": 137.65420532226562,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "d6c8cdd956c3835136a9d3d69be5a207965760fb54807e56e55fe7e0756a8eff",
+        "w": "65a95a55ad5129f191c3a1a3e6de3cacb422dd980ef7b6e6a743edbcc7b6a6c1",
+        "y": "36d143b56e0d1dad7ec0e3e3d65a98577a3950c3b4358a6a05e52344a64eb874"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 127,
+      "seed": 225060928,
+      "weight_seed": 20260928,
+      "serial_generation_ms": 271.4,
+      "row0_sqsum_serial": 106.00135803222656,
+      "row0_sqsum_pairwise_tree": 106.00137329101562,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "e796d2abe05854a8699af1c7240fe59a4f3b71760e886399736a6a70cae827ff",
+        "w": "65a95a55ad5129f191c3a1a3e6de3cacb422dd980ef7b6e6a743edbcc7b6a6c1",
+        "y": "9f4a9a3e1f5c59016b8d00b7d4baa365726320f3b25e00e93c536cde40de142a"
+      }
+    },
+    {
+      "rows": 1,
+      "hidden_size": 128,
+      "seed": 20360929,
+      "weight_seed": 20260929,
+      "serial_generation_ms": 0.1,
+      "row0_sqsum_serial": 121.85287475585938,
+      "row0_sqsum_pairwise_tree": 121.85285949707031,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "067fab627a899012151ed2260b3b40ff1e52295e1e33d5de1e5d0e4b8b6f99fa",
+        "w": "9e4c82c7be31bf345d0b1aadbd7c2e34b0335f548471dbd416782ab7d5cc3a0f",
+        "y": "58f7e6e259851cb40ce0023c38d9af68ad45334b6da97a3536201ad7b0c2ef60"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 128,
+      "seed": 20660929,
+      "weight_seed": 20260929,
+      "serial_generation_ms": 0.7,
+      "row0_sqsum_serial": 151.2428436279297,
+      "row0_sqsum_pairwise_tree": 151.24282836914062,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "df55b6c9f26f44a81d9676b2d656a0b1a5da2770bbcfa23c632de6754c1b14c0",
+        "w": "9e4c82c7be31bf345d0b1aadbd7c2e34b0335f548471dbd416782ab7d5cc3a0f",
+        "y": "656bc02984a2a290aa46c6f184e86e38d8faa2da5b4452c6b7a4695167a70320"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 128,
+      "seed": 33060929,
+      "weight_seed": 20260929,
+      "serial_generation_ms": 16.9,
+      "row0_sqsum_serial": 155.18621826171875,
+      "row0_sqsum_pairwise_tree": 155.1862030029297,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "012c779f2d63f9717dd7c0ac8ecb653fa4bd724158684089b97af7869db4941c",
+        "w": "9e4c82c7be31bf345d0b1aadbd7c2e34b0335f548471dbd416782ab7d5cc3a0f",
+        "y": "fabe7cdda0a219f430a3491817f46c5ea3a2a8b9696c207c426cd93e1553cabf"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 128,
+      "seed": 71460929,
+      "weight_seed": 20260929,
+      "serial_generation_ms": 67.3,
+      "row0_sqsum_serial": 139.2806396484375,
+      "row0_sqsum_pairwise_tree": 139.2806396484375,
+      "row0_sqsum_bit_identical": true,
+      "sha256": {
+        "x": "7009bfe2d99880f5a9f7a445a1062247cb77a73a7e0134797a005f3524462a20",
+        "w": "9e4c82c7be31bf345d0b1aadbd7c2e34b0335f548471dbd416782ab7d5cc3a0f",
+        "y": "cfcd3e918fd6dba50d28021c8b63d8b5be58b78a9d3190667d37360e2dd61071"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 128,
+      "seed": 225060929,
+      "weight_seed": 20260929,
+      "serial_generation_ms": 268.0,
+      "row0_sqsum_serial": 103.47557830810547,
+      "row0_sqsum_pairwise_tree": 103.47554016113281,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "6396dac2ec8dd59f4cad6c7266dd7d87f184f081d1c4fc1d5a247b02c0b55e11",
+        "w": "9e4c82c7be31bf345d0b1aadbd7c2e34b0335f548471dbd416782ab7d5cc3a0f",
+        "y": "f60be6c88a2623e8eff5180cc6ff30bdba05d23736e36c3bf80328fcf8b0f33d"
+      }
+    },
+    {
+      "rows": 1,
+      "hidden_size": 129,
+      "seed": 20360930,
+      "weight_seed": 20260930,
+      "serial_generation_ms": 0.1,
+      "row0_sqsum_serial": 121.52952575683594,
+      "row0_sqsum_pairwise_tree": 121.529541015625,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "f4b66104ec7753be695a9b49288f4ca367dcb519ec7286ff4763109144581388",
+        "w": "c896ee49b2e060b1d70d52c3eeb5bbe1e661bf749e4fe80231cb20d805499605",
+        "y": "a0e1ad5b7ce55f362a0eb5218176bf6c6372323665f728d8a7e0d70f3524569b"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 129,
+      "seed": 20660930,
+      "weight_seed": 20260930,
+      "serial_generation_ms": 0.5,
+      "row0_sqsum_serial": 149.3625946044922,
+      "row0_sqsum_pairwise_tree": 149.36264038085938,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "5f537013abe27e0fefdd92c9d1982e2ea3b1325d059a10c8ee448e7543b00cfd",
+        "w": "c896ee49b2e060b1d70d52c3eeb5bbe1e661bf749e4fe80231cb20d805499605",
+        "y": "730e849fb2bfe2b1575aeffa044ce07b7cde71e7b9313984f49efaf6506bf128"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 129,
+      "seed": 33060930,
+      "weight_seed": 20260930,
+      "serial_generation_ms": 16.8,
+      "row0_sqsum_serial": 129.84796142578125,
+      "row0_sqsum_pairwise_tree": 129.8479766845703,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "f08ed5809afbded7c1ce8b12668ea90e0f536dc6ced617f082999d70f87bd7b0",
+        "w": "c896ee49b2e060b1d70d52c3eeb5bbe1e661bf749e4fe80231cb20d805499605",
+        "y": "f70ab362725ae43206fedd376385c95e68b10b37439ff30725b413ec6d6d61ba"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 129,
+      "seed": 71460930,
+      "weight_seed": 20260930,
+      "serial_generation_ms": 67.5,
+      "row0_sqsum_serial": 161.72146606445312,
+      "row0_sqsum_pairwise_tree": 161.721435546875,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "b4e6ff3af4ac8b25fb9f3c46e4139e9301dd84bf02b80c7c860f4b59b0ca9d38",
+        "w": "c896ee49b2e060b1d70d52c3eeb5bbe1e661bf749e4fe80231cb20d805499605",
+        "y": "4445786c63fc5a0004ca308e3ce5b1e0db6d9e3d7204abc68f801aa6139fa82c"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 129,
+      "seed": 225060930,
+      "weight_seed": 20260930,
+      "serial_generation_ms": 273.3,
+      "row0_sqsum_serial": 113.36113739013672,
+      "row0_sqsum_pairwise_tree": 113.36116027832031,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "d56779c8121c0267be80e24cb1c48d4ffd42e657d60b67949d9370cb6d614cc9",
+        "w": "c896ee49b2e060b1d70d52c3eeb5bbe1e661bf749e4fe80231cb20d805499605",
+        "y": "1f9e573b0941313863965014ba23fd59e1251a50fedc0ceb687c8b014eefefe1"
+      }
+    },
+    {
+      "rows": 1,
+      "hidden_size": 1023,
+      "seed": 20361824,
+      "weight_seed": 20261824,
+      "serial_generation_ms": 1.0,
+      "row0_sqsum_serial": 1086.7843017578125,
+      "row0_sqsum_pairwise_tree": 1086.783935546875,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "6bd8fcea3f00abb37d1bf9d7b8bd26b17a77b9e17463cc8da452ec2aff7d8f90",
+        "w": "f0d85104b34750553d3d3a611732ab78bfd5cee89e38d3153efef2806402e786",
+        "y": "1287d8f25d6529a8339465e14d6e01acf1726281507011940cc7697f3b8a5904"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 1023,
+      "seed": 20661824,
+      "weight_seed": 20261824,
+      "serial_generation_ms": 4.2,
+      "row0_sqsum_serial": 1058.62353515625,
+      "row0_sqsum_pairwise_tree": 1058.62353515625,
+      "row0_sqsum_bit_identical": true,
+      "sha256": {
+        "x": "5720897f6702ef4e79caebe8e8d526a4647ec7df3ad9294e4619b3de630d75d7",
+        "w": "f0d85104b34750553d3d3a611732ab78bfd5cee89e38d3153efef2806402e786",
+        "y": "996e20060cb16f26146dafa4941d06e0fc86139b6cfd309b3fd95d53c4b0caaf"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 1023,
+      "seed": 33061824,
+      "weight_seed": 20261824,
+      "serial_generation_ms": 134.8,
+      "row0_sqsum_serial": 1081.16455078125,
+      "row0_sqsum_pairwise_tree": 1081.165283203125,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "2cb25e87ce04a67f8a5b7c08a287473491886203126a6a6d3bace0689cd03bff",
+        "w": "f0d85104b34750553d3d3a611732ab78bfd5cee89e38d3153efef2806402e786",
+        "y": "6bb5b30841e5d816affb74d517b55c1932be4dffb55538e47f2661ab6b4ba040"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 1023,
+      "seed": 71461824,
+      "weight_seed": 20261824,
+      "serial_generation_ms": 537.4,
+      "row0_sqsum_serial": 1037.37841796875,
+      "row0_sqsum_pairwise_tree": 1037.3787841796875,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "6935c1b4b00eefe269e9fd1d4abe2841739a47e206ee4fcf1dc06dcbc076b2ef",
+        "w": "f0d85104b34750553d3d3a611732ab78bfd5cee89e38d3153efef2806402e786",
+        "y": "5c504254f12a785f47364f00ae432262adcbf9a5380b31eb4d7fcb64d31695db"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 1023,
+      "seed": 225061824,
+      "weight_seed": 20261824,
+      "serial_generation_ms": 2152.4,
+      "row0_sqsum_serial": 1042.38427734375,
+      "row0_sqsum_pairwise_tree": 1042.384033203125,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "3fa095f220a2531dee6772a65ff435b7c4895cb0d3208660ea8122c00a76ee16",
+        "w": "f0d85104b34750553d3d3a611732ab78bfd5cee89e38d3153efef2806402e786",
+        "y": "a78653fc7692f147b10fe48512599b04ed2a42d642c5c2f55caf3796354cb035"
+      }
+    },
+    {
+      "rows": 1,
+      "hidden_size": 1024,
+      "seed": 20361825,
+      "weight_seed": 20261825,
+      "serial_generation_ms": 1.1,
+      "row0_sqsum_serial": 966.927978515625,
+      "row0_sqsum_pairwise_tree": 966.9291381835938,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "1c518118c9eef2fa1a2e3c84acdecb3e517ae24f29a96cfd1e7be32d4942ac70",
+        "w": "c9ba59c4fb15916c29a6fe3850d2bc80118897b1e91cef1104d0100bf702fa74",
+        "y": "00c92b2830a310b963b08b4844cfca6680f947a5202a0e93ecaf6b38d64ea555"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 1024,
+      "seed": 20661825,
+      "weight_seed": 20261825,
+      "serial_generation_ms": 4.2,
+      "row0_sqsum_serial": 1029.6226806640625,
+      "row0_sqsum_pairwise_tree": 1029.622802734375,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "f40e78ff9df6f0468e6a922be3ba3cc27c9191e213ace9e4c4034631e3c07dc3",
+        "w": "c9ba59c4fb15916c29a6fe3850d2bc80118897b1e91cef1104d0100bf702fa74",
+        "y": "61d71182377dd1fdf61ebe85ee7b646241a1f377328083dd0a18ceeea8271970"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 1024,
+      "seed": 33061825,
+      "weight_seed": 20261825,
+      "serial_generation_ms": 134.2,
+      "row0_sqsum_serial": 1077.1751708984375,
+      "row0_sqsum_pairwise_tree": 1077.1746826171875,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "78c515b3fce1330136cd404aa0544b47aeccd95d92e7db99ca1eabb914a3fb7c",
+        "w": "c9ba59c4fb15916c29a6fe3850d2bc80118897b1e91cef1104d0100bf702fa74",
+        "y": "4d290f3b73eb2e263f37eb5c262bb022f3c3e9260e2620dc2c0e64635a3baf84"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 1024,
+      "seed": 71461825,
+      "weight_seed": 20261825,
+      "serial_generation_ms": 538.0,
+      "row0_sqsum_serial": 1044.233154296875,
+      "row0_sqsum_pairwise_tree": 1044.233154296875,
+      "row0_sqsum_bit_identical": true,
+      "sha256": {
+        "x": "950939e43f666beaa85d191a8db52e4375361c7a7eb701bb80a922541cc0d843",
+        "w": "c9ba59c4fb15916c29a6fe3850d2bc80118897b1e91cef1104d0100bf702fa74",
+        "y": "0c20f86b5962ba986dd127f8c41948ff1cbc09d0769e17ed65912355d0eed39e"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 1024,
+      "seed": 225061825,
+      "weight_seed": 20261825,
+      "serial_generation_ms": 2162.2,
+      "row0_sqsum_serial": 1012.3231201171875,
+      "row0_sqsum_pairwise_tree": 1012.3229370117188,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "7ce8726d4d7f7d381349240c0d1a9b46c8b730c0cafd9bc1a3c0ecd6a5b3a796",
+        "w": "c9ba59c4fb15916c29a6fe3850d2bc80118897b1e91cef1104d0100bf702fa74",
+        "y": "c825ec518c55bc438f2816f54059a86379e81229486db6b76123b71799767703"
+      }
+    },
+    {
+      "rows": 1,
+      "hidden_size": 1025,
+      "seed": 20361826,
+      "weight_seed": 20261826,
+      "serial_generation_ms": 1.1,
+      "row0_sqsum_serial": 1017.0656127929688,
+      "row0_sqsum_pairwise_tree": 1017.0657348632812,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "0809a9f52288565e5c355a5ca95872f67cd4a6926deda11fa4c6e4e3303a2a2f",
+        "w": "a89a4236e535965b2954539c79d08269ce402c7703585284bba2bcdbb5170e79",
+        "y": "237d36a9f6eaba420cd5e30a21160b46d0fe6552cb6c82875eaf298b78af3367"
+      }
+    },
+    {
+      "rows": 4,
+      "hidden_size": 1025,
+      "seed": 20661826,
+      "weight_seed": 20261826,
+      "serial_generation_ms": 4.3,
+      "row0_sqsum_serial": 1075.844970703125,
+      "row0_sqsum_pairwise_tree": 1075.843994140625,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "9aaf74776fc490b6240f32e27ca0e148954480bf0a7a49804bbe8d0e4d0c5700",
+        "w": "a89a4236e535965b2954539c79d08269ce402c7703585284bba2bcdbb5170e79",
+        "y": "1252c01bb56995c73331cd6a58642fcc2c2c030259bddece1c910653e71a66a5"
+      }
+    },
+    {
+      "rows": 128,
+      "hidden_size": 1025,
+      "seed": 33061826,
+      "weight_seed": 20261826,
+      "serial_generation_ms": 135.2,
+      "row0_sqsum_serial": 1031.8460693359375,
+      "row0_sqsum_pairwise_tree": 1031.84619140625,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "9216eb094e777ed2ed13d8178023407ba7d267cf2af9bf374a56a77e8763e4d4",
+        "w": "a89a4236e535965b2954539c79d08269ce402c7703585284bba2bcdbb5170e79",
+        "y": "ff5b8288ba7a25d81e3e5dddd1dc5025a9f5215c85a97ab2a7e16092ce4549b7"
+      }
+    },
+    {
+      "rows": 512,
+      "hidden_size": 1025,
+      "seed": 71461826,
+      "weight_seed": 20261826,
+      "serial_generation_ms": 536.9,
+      "row0_sqsum_serial": 1021.405029296875,
+      "row0_sqsum_pairwise_tree": 1021.404541015625,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "04f0d88baa48803a4f02971a6d0139074a5ee1636ee12ef2a5ab6ab732cf82f7",
+        "w": "a89a4236e535965b2954539c79d08269ce402c7703585284bba2bcdbb5170e79",
+        "y": "9042f164a5e40dcf6e294b0bf9c2e90379c3c30fab8e19332a55c0a7b3218391"
+      }
+    },
+    {
+      "rows": 2048,
+      "hidden_size": 1025,
+      "seed": 225061826,
+      "weight_seed": 20261826,
+      "serial_generation_ms": 2152.3,
+      "row0_sqsum_serial": 994.253662109375,
+      "row0_sqsum_pairwise_tree": 994.2534790039062,
+      "row0_sqsum_bit_identical": false,
+      "sha256": {
+        "x": "de814fdd15451798ac9ea04dbbf2ae0b4cee6922ba59ad60a66cbaf55bab16db",
+        "w": "a89a4236e535965b2954539c79d08269ce402c7703585284bba2bcdbb5170e79",
+        "y": "ba77b2ec7d0c560f003dfa644e1a2c49e1a78b786da85bd9eec4b188ec319d96"
+      }
+    }
+  ],
+  "npz_sha256": "9a4a82c2e10d11b42dd4314d665572a87e12f226be9d4f9a7bdce3c1f85f002d"
+}

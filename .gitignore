@@ -35,3 +35,29 @@ venv/
 *.tar.gz
 tmp/
 temp/
+
+# 课程书稿与出版产物
+**/book/
+*.pdf
+*.docx
+*.tex
+
+# 分篇实验产物
+/base/build/
+/sandbox/**/data_local/
+/sandbox/**/results_local/
+/kernel/**/results/
+/kernel/**/models/*
+!/kernel/**/models/MANIFEST.json
+/kernel/**/environment*.json
+/kernel/**/*.npy
+/kernel/**/*.npz
+/kernel/chapter_01/fixtures/
+/kernel/chapter_01/performance/fixtures/
+/kernel/**/*.so
+/kernel/**/*.o
+/kernel/**/build/
+/kernel/**/build-log-*.txt
+/kernel/**/build-flags.txt
+/kernel/**/compile-time.json
+/kernel/**/first-run*.json

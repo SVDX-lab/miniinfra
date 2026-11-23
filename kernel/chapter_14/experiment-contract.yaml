@@ -1,0 +1,47 @@
+# 第 14 期实验合同：自动融合的编译器路径——torch.compile/Inductor
+question: 编译器（Inductor）什么时候自动融合、什么时候放弃？它的融合结果离手写（ch04）/DSL 手写（ch14）差多少？三者各适合什么场景？（含 MUSA 侧 torch.compile 后端可用性实机确认——大纲 §14 准入第 8 条）
+hypothesis: Inductor 对"逐元素+可并行归约+epilogue"链一律水平融合（含 residual add+RMSNorm 自动合成 ch04 手写融合同构物），对 GEMM 委托 extern 库、对 attention 子图委托 SDPA 融合 op；数值落在与手写同一等价类（t 位级、y 归约顺序噪声）；CPU 上收益来自"去 dispatch+去中间物化+自动向量化/并行"，随每元素计算量占比放大；编译器可用性以 backend 集成完整性为前提（三平台实测：CPU 完整/CUDA 完整/MUSA 缺 streams 属性需一行 shim——M-49）。
+baseline: eager 组合表达式（= ch04 的 torch 组合链，ch04 实测其发射 9 kernel/迭代）；对照锚点直接引用 ch04/ch14 实测数字（协议"数字直接引用不重测"）。
+variant: 编译对象三档（rmsnorm 组合表达式 / add+rmsnorm 分离段 / qwen3 前向段）× 编译变体（CPU 5 变体全跑 / CUDA mode 阶梯 eager-inductor-reduce-overhead × fp16+fp32 × rows 1,128,2048,32768）× shape {1,128,2048}×1024；三平台全量实测（CPU 本地、MUSA 探测会话、CUDA 回填会话）。
+single_variable: 编译器介入程度（图捕获 only / AOT only / 完整 inductor 代码生成）——同一函数同一 fixtures，融合决策全部交给编译器。
+invariants:
+  model: Qwen/Qwen3-0.6B hidden 口径（hidden=1024/16 头/8 KV 头/head_dim=128/intermediate=3072/eps=1e-6/rope_theta=1e6）；qwen3 段 = embed→2×DecoderLayer→final norm（不含 lm_head），随机固定 seed 权重（本地无模型权重，编译器行为与权重数值无关，如实记录）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（ch04 separated_add_rmsnorm_serial 原样复用，fixtures 随代码分发）
+  fixtures_seed: 20260415（r: base+rows*1e5+H；h: +555555；w: base+H；同 ch04 规则换基点）
+  correctness_shapes: (rows,H) ∈ {(1,1024),(128,1024),(2048,1024),(128,127),(128,1025)}
+  benchmark_shapes: rows [1,128,2048] × H 1024（CPU/编译口径）+ CUDA/MUSA DRAM 探针 rows=32768
+  dtype: FP32 主口径（CPU 编译器路径）；CUDA/MUSA 列 FP16+FP32
+  timing: OperatorTimer CPU 口径（perf_counter 逐次，P50/P95，warmup/repeats 入结果）；冷编译 = dynamo reset + 关 fx_graph_cache 后首调墙钟（C++ 构建缓存命中口径已声明）
+operator_contract:
+  math: 与 ch04 同（t_i = fl32(r_i+h_i)；y_i = w_i * t_i / sqrt(mean_j(t_j^2)+eps)），本合同新增"被编译函数体"要求
+  compiled_source_semantics: |
+    合同校验必须写进被编译函数体：H=0 显式 ValueError（smoke 实测：无校验时
+    编译路径静默 NaN、有校验时 trace 期 raise 保留语义）；.float() 上转换是
+    源码语义的一部分（fp64 输入的 variance 数学仍为 FP32，生成代码 kernel
+    签名 double→float buffer→double 逐字对应）
+  in_place_semantics: "in-place 突变对象（add_rmsnorm_inplace_style）经 functionalization 保留调用方可见突变（same_buffer 实测 True），inductor 内存规划把 y 写进死亡输入 buffer（生成代码证据）——与 ch04 手写 in-place 语义等价且零额外拷贝"
+  dynamic_shape: "automatic dynamic（默认）：shape 序列 1→128→2048→1→64→2048 共 2 张图；mark_dynamic 行维同构；全局 dynamic=True 在纯净进程可用（weight 对齐 H 维自动回特化）；权重对齐维真实变化 = 编译器硬放弃（广播 trace 失败，报错全文存档）"
+  guard_semantics: "guard 覆盖 Tensor(dtype/device/stride/shape)、Python float 值（eps）、全局符号身份（torch.rsqrt/被调函数）——eps 变值、dtype 变化、非连续 stride 均触发重编译（实测）"
+  nan_semantics: 同 ch04（NaN 元素位置传播、平方和污染全行 y NaN）——编译路径逐项复验（smoke）
+  error_behavior: "H=0 两条路径显式 ValueError；rows=0 空 Tensor 正常返回"
+  determinism: "同编译实例重复调用位级一致（smoke 实测）"
+tolerances:
+  fp32_y: 1e-5（第 01/02/03 期合同口径；实测最差 7.63e-06）
+  t: 位级（加法无累加，实测 5/5 位级）
+  fp64_input_y: 1e-5（内部数学 FP32 语义所致，2.38e-07 实测噪声）
+migration_note: |
+  MUSA 列非迁移而是"平台可用性探测"（实机结论，2026-11-21 锁内会话）：
+  torch_musa 2.11 集成层存在（_inductor/codegen/triton.py + musagraphs backend），
+  但 torch.cuda 完全别名 torch_musa 且 streams 子模块缺失 → dynamo guard 构造期
+  6/6 backend 同因失败（迁移台账 M-49）；一行实验性 shim 后 inductor 全链可用
+  （t 位级一致、eager→compiled 2.17–5.15×、DRAM 区超 ch04 手写融合）；失败后
+  dynamo.reset() 自身崩溃 → compile 矩阵实验必须逐 case 子进程（KI-15-01/09）。
+anchors_quoted_not_remeasured:
+  ch04_cuda_fused: "fp32@32768 0.5873ms(99.5%) / fp16@32768 0.2946ms(99.2%)，兑现率 1.05–1.14；2048 行 fp32 0.0237 / fp16 0.0269 ms——CUDA 列回填后编译器对照：比值 1.0026/0.9976（逐微秒打平）"
+  ch04_musa_fused: "fp16@2048 0.0613ms（兑现率 2.02–2.08 @DRAM）；launch 地板 ~28µs（M-12）；32768 行 fp16 0.4997ms(75.5%)/fp32 0.8261ms(91.4%)——MUSA 编译器对照：0.818/0.951（反超）"
+  ch14_triton_fused_cuda: "DRAM 区与手写逐微秒打平（0.5878/0.5878、0.2929/0.2929）——编译器对照比值 1.0017/1.0034 同打平"
+  ch14_triton_musa: "发射税 ~80µs = 手写 ~28µs 的 2.9×；DRAM 代码生成 87.6–90.7%"
+  ch14_triton_target: "GPUTarget(backend='musa', arch=22, warp_size=128) vendor fork 3.2.0 mtgpu"
+  ch10_graph: "手写 CUDAGraph 单 kernel 3.6×/intercept 2.4µs——reduce-overhead 对照双反例（§8.3）"
+acceptance_questions: 大纲行 887 三问（何时融合/放弃、离手写差多少、三者各适合什么场景）→ EXPERIMENT_LOG §10 用实测数据回答

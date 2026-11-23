@@ -1,0 +1,35 @@
+chapter: "14"
+title: 容器与 microVM
+status: implemented
+question: |
+  何时需要 microVM？
+hypothesis: |
+  相同命令轨迹下，Firecracker microVM 提供独立 guest kernel（内核版本与宿主不同，
+  这是隔离边界的直接证据），启动延迟高于容器、常驻内存更高；
+  文件/网络兼容性在同一简单轨迹下保持。若 VM 内核与宿主相同或数字相反，则假设不成立。
+baseline: |
+  容器后端（主线：docker run alpine + 同一命令轨迹）。
+variable: |
+  执行后端：Firecracker v1.17.0 microVM（1 vCPU / 256 MiB / 无网卡，
+  bzImage=Alpine linux-virt 6.6.142，rootfs=alpine 3.19 ext4 + init 脚本，
+  结果经第二块 ext4 磁盘带出、debugfs 提取）。
+fixed:
+  命令轨迹: echo 标记 + sha256sum /dev/zero 截断 + 写结果文件（两组一致）
+  隔离配置: 容器组=主线约束；VM 组=无网卡（与容器 network none 对齐）
+  重复: 各 10 次（启动 P50/P95）
+correctness_checks:
+  - 隔离边界证据：VM 内 uname -r 为 6.6.142-virt（guest kernel），
+    容器内 uname -r 为宿主 WSL2 内核（共享内核）——边界差异的直接证据
+  - 文件兼容：VM 结果磁盘带出 kernel.txt/out.txt，内容可核对
+  - 网络语义：VM 无网卡 ↔ 容器 network none
+  - VM 正常关机（poweroff），进程与资源回收
+performance_metrics:
+  - 启动到 READY / 到任务完成的 P50/P95（VM vs 容器）
+  - 常驻内存（READY 后 RSS / docker stats）
+fault_injection: 无（本期是后端对照；宿主侧网络策略保留声明见 README）
+exclusions:
+  - 不使用 jailer/chroot 沙箱化 firecracker 进程（教学直跑；生产必用 jailer）
+  - 不做 Firecracker 快照恢复（延伸议题，不作为主线结论）
+  - 不给 VM 配网络（Firecracker 自身不提供网络过滤，宿主侧策略是责任边界）
+known_risks:
+  - WSL2 嵌套虚拟化下 VM exit 开销可能放大 VM 数字——如实记录适用范围

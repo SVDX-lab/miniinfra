@@ -1,0 +1,53 @@
+question: 把"朴素 GEMM"从零组织（每线程直读 global）组织成单层 tiling + 片上缓冲 + 寄存器分块后，三种实现（CPU 朴素三重循环 / CUDA tiled / MUSA tiled）在 tile 大小扫描下的达成率与 bound 位置如何变化？GEMM 是否如理论预测落在 compute-bound 侧（与 RMSNorm 的 memory-bound 对照）？
+hypothesis:
+  - GEMM 算法 AI = 2MNK/((MK+KN+MN)*itemsize) 随形状增长跨越平台脊点（4090 FP32 规格脊点 ≈82 FLOP/B）：256³（AI≈42.7）memory-bound、1024³（AI≈170.7）compute-bound——与 RMSNorm（AI≈1，深度 memory-bound）形成 bound 谱系两端的对照；
+  - tiling 收益主导：零组织基线 → 单层 tiling 有数量级提升；tile 大小与寄存器分块深度决定剩余空间；
+  - epilogue 融合省的是 C 的整遍读写：分离 kernel 的额外延迟 ≈ 2×MN×itemsize 的搬运时间（小 shape 上还要叠加 launch 开销）；
+  - 第 18 期 WMMA 只换计算单元（同 tile、同形状、同计时口径）后，达成率台阶式上升——本期为其建立"朴素 CUDA Core"基线。
+baseline: CPU FP32 朴素三重循环真值（matmul_naive_rows，k 升序累加）+ torch.matmul（各后端厂商库标尺）+ 第 01 期实测峰值（拷贝带宽 / cuBLAS FP32、FP16 GEMM）。
+variant: 同一份 GEMM 语义在三个平台共 4 类实现：CPU 朴素（纯 Python 三重循环 + numpy 行 FMA）、CUDA tiled（11 个 tile×REG 配置 + 零组织基线）、MUSA tiled（同配置迁移版）、epilogue 融合/分离两组织。
+single_variable: 实现组织方式与平台（tile 配置扫描时只变 tile/REG）。
+invariants:
+  truth_dtype: FP32（CPU naive rows，k 升序累加，位级确定）
+  performance_dtype: FP32 主线（逐条 FMA 朴素思想）+ FP16 对照（FP16 输入 + FP32 累加 + FP16 输出）
+  gemm_semantics: C[M,N] = A[M,K]·B[K,N]，行主序，无转置预变换
+  epilogue_gelu: tanh 近似式 0.5x(1+tanh(sqrt(2/pi)(x+0.044715x^3)))，Kernel 与 CPU 真值同式
+  epilogue_silu: x/(1+exp(-x))
+  fixtures_seed: 20261118（seed = SEED_BASE + M*100000 + K*100 + N，rng=numpy default_rng）
+  correctness_shapes: [4x8x4(tiny int), 13x17x11, 64³, 128³, 200³, 256³, 512³, 1024³]
+  benchmark_shapes: 方阵 {256, 512, 1024}（S4000 与 4090 同形状同口径）
+  tile_configs: [16x16x16_reg2x2, 16x16x16_reg4x4, 32x32x8_reg2x2, 32x32x8_reg4x4, 32x64x8_reg2x2, 32x64x8_reg4x4, 64x32x8_reg2x2, 64x32x8_reg4x4, 64x64x8_reg2x2, 64x64x8_reg4x4, 64x64x8_reg8x8]
+  timing: GPU=二进制内部事件对（warmup 后逐样本 record→launch→record，末尾一次同步）；厂商库=OperatorTimer 事件对（ch01 口径）；报告 P50/P95/min/mean + 全样本
+  warmup_repeats: tiled warmup=10、repeats 100/50/30（按 shape）；naive 基线 warmup=3、repeats=10；MUSA 厂商库 warmup=20（JIT 预热）
+  peaks_denominator: 规格（1008/768 GB/s、FP32 82.6/25.0 TF、FP16 165.2/100 TF）为主口径；chapter_01/performance 实测（918.8/711.28 GB/s、FP32 55.6/12.53 TF、FP16 171.63/64.55 TF）为厂商库标尺与带宽对账口径
+  episode_19_interface: 同 tile 配置族、同 shapes、同计时口径、同 CLI（naive_gemm_bench）；第 18 期新增 --kernel wmma 只换计算单元
+out_of_scope:
+  - 多级流水 / cp.async / 双缓冲（第 19 期）
+  - WMMA/Tensor Core（第 18 期）
+  - 分块大形状（>1024）、非方阵扫描、batch GEMM
+  - Tensor 布局预变换（CN 版本）、swizzle
+  - BF16/INT8 路径
+correctness:
+  - 手算极小例 4×8·8×4（整数矩阵，期望值逐项手算可核对，smoke_test 位级断言）
+  - fixtures 8 组形状 × FP32 多配置（4 tiled + naive 基线）vs CPU FP32 真值
+  - FP16 对照（FP16 输入/输出 vs FP32 真值，容差单独记录）
+  - epilogue bias/gelu/silu：融合 vs 分离 vs numpy 同式真值
+  - 确定性：512³ 同配置连续 3 次位级一致（无原子、固定累加序）
+  - 半精度位级转换 fallback（MUSA 无 fp16 头时）：本地 65536 位型穷举 + 1.06M float 值对拍 numpy.float16
+metrics:
+  - 单配置 P50/P95/min 延迟与全样本
+  - 有效 TFLOPS、有效带宽（名义字节口径）
+  - bound 分类（spec 口径 + measured 对账口径）与 AI
+  - 延迟达成率 = roofline 下限 / 实测（下限 = max(t_mem, t_compute)）
+  - 厂商库比值：朴素 P50 / torch.matmul P50（同 shape 同 dtype 同口径）
+  - 寄存器/共享内存占用（--resource-usage 编译日志 + gpuFuncGetAttributes）
+  - epilogue 额外延迟（vs gemm_only 的 Δ 与 %）
+  - 编译时间与首次运行时间
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  correctness_profile: fixtures 全部 8 组 × 5 配置 × 2 dtype
+  common_benchmark_profile: 方阵 {256,512,1024} × 11 tile 配置 × {fp32,fp16}，同 warmup/repeats
+gpu_plan:
+  cpu: 真值 fixtures 生成（本地）、手算例、边界行为、CPU 三档性能对照
+  one_gpu_cuda: nvcc sm_89 构建 + selftest + fixtures 正确性 + tile 扫描 + epilogue 实验 + nsys kernsum 证据
+  one_gpu_musa: mcc 构建（回退链记录）+ selftest + fixtures 正确性 + tile 扫描 + epilogue 实验（ncu/ncs 类工具不可用则记平台边界）

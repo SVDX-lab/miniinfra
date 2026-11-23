@@ -1,0 +1,103 @@
+# 第 26 期实验合同：MTP——多 Token 预测与投机解码
+
+question: >
+  以第 01 期手写 Qwen3（完整 28 层，CPU FP32）为目标模型、单层 Qwen3+MTP 头
+  为 draft，greedy 投机解码能否在不改分布的前提下逐 token 复现第 01 期 Greedy
+  32 Token 真值（对全部 draft 质量 × k 组合）？接受率如何随 draft 长度 k、
+  draft 质量（复用/随机/恒等/lookup）与领域变化？"一次验证多 Token"摊薄权重
+  读取的收益在 CPU 列的实测加速比与 (αk+1)/(1+c·k) 理论模型差多少？verify
+  批量化（一次 k+1 Token 前向 vs 逐 Token k+1 次前向）的收益归因如何？
+
+hypothesis: >
+  1) greedy 投机解码不改分布：每个输出 token 都是目标模型在相应前缀下的
+  argmax（接受=相等测试通过，拒绝=纠正 token），输出流与贪心逐 token 一等，
+  与 draft 质量无关——随机 draft 也必须输出真值；2) 接受率随 draft 位置
+  递减（误差复合），随 draft 质量单调（未训练单层 draft 的 argmax 接受率
+  接近 0——MTP 模块必须训练的实证；lookup 启发式在重复文本上给出首位置
+  高的形态）；3) 理论加速比 (αk+1)/(1+ck)：α→1 时上界 1/c，α≈0 时 <1
+  （负收益），实测应落在标定模型附近；4) verify 批量化收益 = k+1 次单步
+  前向与 1 次批量前向的时间比，CPU 上来自 GEMM M 维 batch 效应（ch18），
+  GPU 上来自 memory-dominated decode 的权重读取摊薄（ep21 AI≈2 结论）。
+
+baseline: >
+  第 01 期 Greedy 32 Token 真值（CPU FP32，truth-manifest.json，只读引用；
+  P01 同 prompt 同 max_new_tokens）+ fast_greedy（仅末位 logits 的贪心，
+  与 ch01 greedy_generate 逐 token 一等——投机实验的时基线，两侧同 LM
+  Head 口径）。
+
+variant: >
+  SpeculativeDecoder：draft（MTPDraftModel 单层 Qwen3 + MTP 头 / CopyLast /
+  PromptLookup）自回归起草 k 个候选 → 目标模型一次前向并行 verify k+1 个
+  位置 → 逐位置相等测试接受、拒绝位插入纠正 token、全接受追加奖励 token。
+
+single_variable: >
+  draft 结构与质量（reuse_layer0 / reuse_layer0+hidden / random_layer0 /
+  copy_last / lookup_1gram / lookup_2gram）与 draft 长度 k；目标模型、权重
+  （SHA256 f47f7117...）、prompt、接受/拒绝逻辑全部同一份。
+
+invariants:
+  config: 目标模型 = Qwen/Qwen3-0.6B（chat，non-thinking template），
+    D=1024/28 层/HQ=16/HKV=8/head_dim=128/vocab=151936/tied embedding
+  config_source:
+    weights: chapter_01/models/qwen3-0.6b/model.safetensors
+      （SHA256 f47f71177f32bcd101b7573ec9171e6a57f4f4d31148d38e382306f42996874b，
+      与 chapter_01/models/MANIFEST.json 一致）
+    truth: chapter_01/truth/truth-manifest.json（P01 prompt + Greedy 32 Token
+      + 首 Token logits SHA256——加载时逐字节对拍）
+    draft_structure: DeepSeek-V3 MTP 模块公开结构
+      （EHNorm/HHNorm/concat/W_proj/单层/共享 LM Head；
+      https://github.com/deepseek-ai/DeepSeek-V3 论文 §2.3 MTP）
+    lookup: prompt-lookup decoding（Saxena 2023，arXiv:2309.15900；vLLM
+      lookup decoding 同款 1/2-gram 复制）
+    theory: speculative decoding (Leviathan et al. 2023, arXiv:2211.17192;
+      Chen et al. 2023, arXiv:2302.01318) 的接受率-加速比模型
+    cost_model_source: chapter_09/EXPERIMENT_LOG（decode 单步 eager CUDA
+      36.68ms/1841 发射 vs MUSA 48.63ms/1925 发射）+ chapter_20（decode
+      memory-dominated、AI≈2 恒定——一次权重读取可验证任意多候选）
+    fetched_at: 2026-11-21
+  config_values:
+    draft_layer: 目标模型第 0 层（Qwen3DecoderLayer deepcopy）或同形状随机
+      （std=0.02，seed=20271121）
+    mtp_head: EHNorm←目标 final_norm（代替未训练 MTP EHNorm，声明）；
+      HHNorm←weight=1；W_proj←[I|0]（zero，默认）或 [0|I]（identity）；
+      FinalNorm←目标 final_norm（reuse 模式）；LM Head←tied Embedding 共享
+    untrained_standins: EHNorm/HHNorm/W_proj 均为未训练代替品（无训练设定
+      的显式声明，见 EXPERIMENT_LOG §3）
+    draft_seed: 20271121（random_main）/ 20271122（random_alt 备用）
+    k_sweep: [1, 2, 3, 4, 6, 8]
+    max_new_tokens: 32（与 ch01 真值同预算）
+    prompts: 6 个（P01=ch01 真值锚点 + P02-P06 变长/变域扩展，fixtures/
+      prompts.json SHA256 入 manifest）
+  dtype_cpu: float32（真值口径）
+  dtype_musa: bfloat16（ep05/ch01 musa 口径；小验证自洽口径 = musa 自己的
+    greedy，另报与 CPU FP32 真值前缀的一致性）
+  timing:
+    cpu: time.perf_counter（OperatorTimer 同款：warmup 后逐样本，P50/P95 入
+      结果）；端到端生成 wall-clock repeats=3
+    cuda_musa_pending: 事件对逐样本 + 末尾一次同步（ch21 口径）
+  sync_boundary: CPU 天然同步；GPU 列回填时 backend_sync(device)
+
+metrics:
+  - 逐 token 一致性（all_match / first_divergence——对 ch01 真值）
+  - 逐位置接受率（accepted/proposed 与 accepted/evaluated 双口径）
+  - α = accepted_tokens / drafted_tokens（成本模型的接受率输入）
+  - 端到端加速比（wall-clock greedy vs speculative，P50 of 3 repeats）
+  - 理论加速比 (αk+1)/(1+ck)（α=1 上界与实测 α 两档）与全标定模型
+  - verify 批量化收益（一次 k+1 位置前向 vs 逐 token (k+1) 次前向时间比）
+  - draft/verify 时间分解（SpeculativeDecoder 内计）
+  - draft 质量诊断（draft token ∈ 目标 top-1/top-5/top-20 比例）
+
+acceptance_questions:  # 大纲行 1103 验收二问（EXPERIMENT_LOG 末尾用数据回答）
+  - 白板写出一个投机解码循环的接受/拒绝逻辑（greedy 相等测试版 + 随机
+    采样拒绝采样版的区别）
+  - 加速比的理论上限从哪来（(k+1)/(1+c·k) 的推导、α 与 c 的实测来源、
+    k→∞ 极限 = α/c、为何 verify 必须并行）
+
+platform_notes:
+  - 4090 故障抢修中：CUDA 列（verify 批量化 GPU 测量）留回填位
+    （implementations/cuda/，CUDA_PENDING.md 列步骤）
+  - S4000 被前序期次占用：MUSA 小验证排队（implementations/musa/，脚本已
+    本地 CPU 路径预验证）
+  - 本地 venv 无 safetensors/regex 包（协议称"依赖已齐"与实际不符）：以
+    safetensors 格式最小加载器（逐字节 SHA256 + 首 Token logits SHA256
+    双层校验兜底）与系统 regex PYTHONPATH 桥接解决，未 pip install（KNOWN_ISSUES KI-27-01）

@@ -1,0 +1,173 @@
+{
+  "schema_version": "kernel-chapter16.fixtures.v1",
+  "seed_base": 20261121,
+  "seed_rule": "seed = SEED_BASE + M*100000 + K*100 + N；rng = numpy default_rng(seed)",
+  "weight_convention": "原始权重 = FP16 checkpoint 值 W16；W32 = float32(W16)；量化 scale 自 FP16 权重计算（服务化标准流程）",
+  "quant_scheme": "per-channel symmetric INT8, scale=amax/127, q in [-127,127], 按输出通道（W[K,N] 的 N 列）",
+  "truth_implementation": "y_truth = torch FP32 matmul(A32, W32)（本地一次生成共用）；tiny_hand 另做字面三重循环对拍",
+  "layer_definition": {
+    "L0_y_truth": "A32 @ W32",
+    "La1_y_a1": "A32 @ dequant(q)（仅量化，FP32 算术）",
+    "La2_y_a2": "engine_fp16(A16, fp16(dequant(q)))（量化+FP16 权重存储，引擎参考）",
+    "La3_y_a3": "engine_fp16(A16, W16)（FP16 无量化对照）",
+    "Lb": "int8_fused kernel 输出 vs L0（服务器实测）",
+    "Lc": "fp16 kernel 输出 vs L0（服务器实测）"
+  },
+  "combos": [
+    {
+      "combo": "tiny_hand",
+      "m": 4,
+      "k": 8,
+      "n": 4,
+      "seed": 20661925,
+      "sha256": {
+        "A16": "197caac312f788ff0812793102d8c2d40c03cf13e16d0fab2956e66da9199c65",
+        "W16": "8eebbf2abfa7b36db45457c17a6643820a9f07e8733f514f15f5def4642a06ee",
+        "q": "8349f4076dfe31892166be7243593cef010df382aec2a1e45cec077baca618eb",
+        "scale": "e28de14bfcfd708ba01b32341d9d5b7c2ac74a32dabd50217dbcdef1d76106b3",
+        "y_truth": "57ddb458a3cce5960320397554fa03a4a2a531c9ae0fff836f2389d7cc78ecf5",
+        "y_a1": "1ef2eca7effb8591cae3216543a9f159fbdd8045b330a235b09af1de4afac23e",
+        "y_a2": "5a133002bd9e32f716310f29181c728886d61ce3afdc2f46afff6a156c63de36",
+        "y_a3": "53adb2c5f87724b36b0f6740f9653bb674075b56d0d1e2d3955db94e2ffc99ac"
+      },
+      "scale_stats": {
+        "min": 0.000581996631808579,
+        "max": 0.0008213313412852585,
+        "mean": 0.0007128377910703421
+      },
+      "tiny_triple_loop_max_abs_diff": 7.450580596923828e-09
+    },
+    {
+      "combo": "ragged",
+      "m": 13,
+      "k": 17,
+      "n": 11,
+      "seed": 21562832,
+      "sha256": {
+        "A16": "fb9fe15d668288590a826752036f6f324e5040e3e48ab3e62e8514c8f0333bba",
+        "W16": "bd3a5fab138d1faecb19a270ae2c61c69200255c5f2c5640702a1213e000ba1f",
+        "q": "35e22f48d70f0e460d0c904a5422c278d2816b2267f767bfafb7ef725e20d11e",
+        "scale": "79ad079efbb5737c8d558b282ede66429b2f0e6a68230fd3c4a219e3d0fbb06a",
+        "y_truth": "340f6ed63c6d63d8ae49846c837028b0c222ae7944c7d6bfcd9c8dcea1cfa66e",
+        "y_a1": "7b9c1c626571201d5b735707cbc9be552b0c910178b2c0ecd12c4b7e73312ca4",
+        "y_a2": "d61dbd62fdcaa532df3aa2209657fc92913b308235aa96672273aa2bb60f3011",
+        "y_a3": "26a7f26491cefab0937fb1e11a6f6609538ac65942bf036026382ee7d8c98efa"
+      },
+      "scale_stats": {
+        "min": 0.000660813704598695,
+        "max": 0.0014215904520824552,
+        "mean": 0.0008595602703280747
+      }
+    },
+    {
+      "combo": "decode_m1_1k",
+      "m": 1,
+      "k": 1024,
+      "n": 1024,
+      "seed": 20464545,
+      "sha256": {
+        "A16": "900211dd702b119552f35ff6151c6628a136e58d8755049da8626cdbf7dce3a6",
+        "W16": "21c86eefaf2baae9f5b54062dfc5081c9d24e9a06f5e3d2b3c6378ad0cbcd1be",
+        "q": "6c1d353eb645f68529d6044f049c2dce72ee1e3e27f28932d22be15cbc32f243",
+        "scale": "ad57c54060a5df7366428038dd73d11c2b466ffc32d8e3b736472e2215e3e57b",
+        "y_truth": "d783383524c0526b642c64309d0252f39d6e38d360810dd22d0b3b37c40f634b",
+        "y_a1": "4fc55459b63c9faebbd4ce108fd83c9f3dca4a7729e4cb4b4acb1c6b8e0c887e",
+        "y_a2": "2b9092a648548a873c8642d560c5386563aa2a89023cf77fa9d82818ab783606",
+        "y_a3": "f05cbac3a93f22cada137cf1f1544b664bbb6dc69e4c1e3ebff0b3101b01b6cf"
+      },
+      "scale_stats": {
+        "min": 0.0010803702753037214,
+        "max": 0.0022184117697179317,
+        "mean": 0.0013511818833649158
+      }
+    },
+    {
+      "combo": "decode_m1_4k",
+      "m": 1,
+      "k": 4096,
+      "n": 4096,
+      "seed": 20774817,
+      "sha256": {
+        "A16": "4a3980089962fdb2178107fabc1190fca0fee9d774549b46b7431a78229cdbed",
+        "W16": "dbd08b0ae7880c7a6e533c0e1a05cafe05fc9b53d03ef732c61d1e29d167efed",
+        "q": "cc09908633c38af1556b8f6ec7060d54edf8d8db62137cef84d0e1eace8f8df9",
+        "scale": "a068e50c827172cbe3cccc7fba28e5f02abc7ecc8c5045f2e2d9178256d49042",
+        "y_truth": "6d93e24ad9d23d86875d13319c07246b0e0d52b05e6743d4568b43bae52e8f3c",
+        "y_a1": "b18ef20739706efa926c320c3666b2e0349f234010d59b06c7f24279ef844009",
+        "y_a2": "131643b15bcd0af58be46ac553174071dd263a808f5686bfe6e87769d7c30873",
+        "y_a3": "919f2aac70491f24a25a61b0c7a8b38aaedc5c30b86ca6329012abf7f3b74122"
+      },
+      "scale_stats": {
+        "min": 0.001188022899441421,
+        "max": 0.002166507765650749,
+        "mean": 0.0014989884803071618
+      }
+    },
+    {
+      "combo": "decode_m4_4k1k",
+      "m": 4,
+      "k": 4096,
+      "n": 1024,
+      "seed": 21071745,
+      "sha256": {
+        "A16": "3ac851c41470e6bc97cbae76c3e871e9f568239556e0412028a526efeab0d758",
+        "W16": "484925072d9b2bd2d7601e334cb3bfc74b30591e5fd62a019d1d3e5f789b2f90",
+        "q": "93581906817d83df040fa9bf9915ddfc12eed17c777f6de2f571620f858a2b30",
+        "scale": "8f88ae0054258213ba92014c8906cfa4ef07a5ba0251ef6b9fe41590ad26c429",
+        "y_truth": "e5c72f4884189723dcee844c87a37f0f8f42915beeb5f5768971c387926778e4",
+        "y_a1": "9711d47c036ff70e19dabc61f801857f0eb4786daa64149bf73ca8accc04c781",
+        "y_a2": "86c5ba01f31501e25efbdb91a9448ef0759c5334edf8515f7f959fd0efd4e33b",
+        "y_a3": "bb128527519138adf85364ec5b63856f311a5f11f33a02b7256d606da007b310"
+      },
+      "scale_stats": {
+        "min": 0.0012399267870932817,
+        "max": 0.002064622240141034,
+        "mean": 0.0014894214691594243
+      }
+    },
+    {
+      "combo": "prefill_256",
+      "m": 256,
+      "k": 1024,
+      "n": 1024,
+      "seed": 45964545,
+      "sha256": {
+        "A16": "c1d4b7d46ee3e5cf7086b4c6065626fbfb55ba4590e9a417fdf8cfb86fec3931",
+        "W16": "578fb0be9f1bd0d813d584b9498748297d55d65cc9d6ba9b017a9d33962e8543",
+        "q": "58f267423008cd62ec70b7fa3761d1298b9c74c6c935a8fdb204a83331d21a89",
+        "scale": "380755da82be8ec19fda0a8740b45f4325a9df8dcb7a4a1704603d1e162dfd38",
+        "y_truth": "974ed91b6c4e391ec49ef9e5b6e165b38196323dc785c32a86caa5b08427be24",
+        "y_a1": "a4fb584bb467e5cdeedc994031a3ecabf25cc46c1e29cfccd56814157db214cc",
+        "y_a2": "aa13b9a9600b5a8700456afc8acce2cabc3a24242edb30b41542c1ad560cc84d",
+        "y_a3": "5adb071e0f591e427a41da75b156c523f3f96a6c66abee9918d976ccf0287740"
+      },
+      "scale_stats": {
+        "min": 0.0010169321903958917,
+        "max": 0.0019425519276410341,
+        "mean": 0.0013535041362047195
+      }
+    },
+    {
+      "combo": "prefill_1024",
+      "m": 1024,
+      "k": 1024,
+      "n": 1024,
+      "seed": 122764545,
+      "sha256": {
+        "A16": "6ae3a963e7f70179887fc2342d540b7f57b674d9b8744763c979c0cea4259c06",
+        "W16": "a048fd2d977ea139e94503e8033153f8e79ddb2fbbd050c3b73596283d85fdcd",
+        "q": "787342fb445fe2b0d11bf3cfe3ecebee8f69045ffe3d8311d32613d369d05549",
+        "scale": "01998458337448cd67d04bdcee2b7b11e646e27ebda54bc61db24078efbdd7f7",
+        "y_truth": "8019f6a0d13ef35777b7b0e8c3d12257fd6b1a28d3959a8f44aecb00ddfebc76",
+        "y_a1": "c770b81526e583d82fbc8f0de3a7d4eec80691e99dd8f996d8f190aa091dced3",
+        "y_a2": "0261a219812ccdc5997c6346737541a3a8715b0af3271db50819a8773f436c1f",
+        "y_a3": "c4f32f68ecc7664ee817d51d08060e47587b3cb3c154cbf7c0edfe75d6c32161"
+      },
+      "scale_stats": {
+        "min": 0.0010621078545227647,
+        "max": 0.0021895761601626873,
+        "mean": 0.0013588422443717718
+      }
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "schema_version": "kernel-chapter17.fixtures.v1",
+  "seed_base": 20260117,
+  "rng": "numpy PCG64 + standard_normal(ziggurat) FP32，流跨版本兼容（NEP 19）",
+  "truth_implementation": "implementations/cpu/ops_reference.py（NumPy FP32 真值锚点）",
+  "truth_dtype": "float32",
+  "shapes": {
+    "rows": [
+      1,
+      128,
+      2048
+    ],
+    "cols": [
+      127,
+      1024,
+      4096
+    ]
+  },
+  "theoretical_bytes_note": "各算子理论字节公式见 ops_harness.py theoretical_bytes()",
+  "combos": [
+    {
+      "rows": 1,
+      "cols": 127,
+      "seed": 20360244,
+      "up_seed": 20360245,
+      "sha256": {
+        "x": "295cd8175f564e119b5b47c7f393f9ed23fae46baea435b60ee442cfac4e1fc6",
+        "up": "141377156ccd97000c5f494eb7a63982426992af19c780ef8dff2cf0c759987c",
+        "y_softmax": "88e6f0dea63b8757af5902b5ca902fd2c4b170abaaf06bc55904089050024735",
+        "y_scan": "31e7dc7a994b5603f51f5d4ba75ed8aa0bcb021a4b7e2aa3406fd09a47750ed0",
+        "y_transpose": "be4d5d2f50b0703ea570ca5528a6abe0ef1c9b34b00b8882ed02d980f2f01bcb",
+        "sum": "3145d7e6ee487007ef53d9e2dabf9533763cb8567854abaf4bba28df28dc08fc",
+        "max": "a491df37af63b376927b713624327c472ad4ddbc9e73110efa3bf5a589d7fe15",
+        "y_silu_gate": "79eb9d1b9b85c758dec566963c0020ba41f4f7998ca0b9ee33e6c9257b09e238"
+      }
+    },
+    {
+      "rows": 1,
+      "cols": 1024,
+      "seed": 20361141,
+      "up_seed": 20361142,
+      "sha256": {
+        "x": "4b335b734865224973ebffa98d48e0cbb1c6addc335b2727e7d3f7101f3466a0",
+        "up": "266dee9ed76d47d1a7a7856863fa3c6b400f74cdb1888b92ced2b4ea5a2f60a1",
+        "y_softmax": "52ae9475dc16faa075e5777d6da9edf2f53662bd0c0b0d42cd0723c53576d821",
+        "y_scan": "82129fbfd7ef87a84b28120d9a565e9690b3502fe027a6bf630db612e8311c4b",
+        "y_transpose": "6eed8706632530d89b4060a0992c538ade1bf5823c236f21086554902a42e24d",
+        "sum": "03312eb135dabcb693c102ce69625d9fac6d7a243b43b2f41ed1c8911f5daea9",
+        "max": "068dfcff9a6f19541d0e85ba04e28d5abec4726802dcb016fb7712a266641edc",
+        "y_silu_gate": "faf558712ba020eb14836342f42cfaec5f5eb8ac2131248433b6d4b41ffac5e6"
+      }
+    },
+    {
+      "rows": 1,
+      "cols": 4096,
+      "seed": 20364213,
+      "up_seed": 20364214,
+      "sha256": {
+        "x": "2808a6660ee2515334882e14c95acace26c66e55633fad6198a8066146213f3e",
+        "up": "8da31225bfecf2c1e8fbeaaf182521e6606552f12cc723afe840663d60a2c708",
+        "y_softmax": "b6d3c6579727ffe7d0d5fc0d33fbc624866068f5c816d6011805d7ec9792dee6",
+        "y_scan": "e2c4928dbd21ed8d9795451928ab9f6ab690c6086186c405c03f43bb81e34fea",
+        "y_transpose": "c2f1183d03a554acf2f273cfec26faa274481c6407a228615269fcf7bb4bc0a9",
+        "sum": "3beaff279fc139079ef878737665f7b045d94567978b2f4c612919b889585475",
+        "max": "d1df57a8cde6ce2d4b24e79c215d59bd3658257d1a0a82ca466dd0ca8f38501a",
+        "y_silu_gate": "fb8ea31f4f89b5b7bf38d4e045777906cf2fb429212252d7241b0922e22b44a0"
+      }
+    },
+    {
+      "rows": 128,
+      "cols": 127,
+      "seed": 33060244,
+      "up_seed": 33060245,
+      "sha256": {
+        "x": "7935b47a0d10c9d0487137c96842965b02ad28d2ad202a5945282c4e23af921b",
+        "up": "5f908ff4fdec967b622cc4f602914ba1791dd4a93e696d74ce75e81fcba0aa82",
+        "y_softmax": "6938fef94f69f191ec0b0900d513abf87efbdc6fd7c3df650d34262ed663d661",
+        "y_scan": "d21516a339590f41a03d3a3fa1e807b266123e525f70d24f483c1482caa599e8",
+        "y_transpose": "bb9d9015496786f1e3b980bcb7eae77ce675b0ecd14b0bec5ca891963ab9acc9",
+        "sum": "4af00c333680ba911e76637fcf2bb6e873155c7c3e4cbe58dbe9f34da940e5d0",
+        "max": "bd1659259bacdf8d445e35842dac861af86d7d11cef7bf01144aa451c653d0d6",
+        "y_silu_gate": "e34a5bb095f888aa47812d42e98db080e414ff5b4717b0e54888ec7cc4182a41"
+      }
+    },
+    {
+      "rows": 128,
+      "cols": 1024,
+      "seed": 33061141,
+      "up_seed": 33061142,
+      "sha256": {
+        "x": "04101935195224b0275e9949264e7909efc8ac99424aa6d443b2adf210ce6250",
+        "up": "9279c034e4c02fd2142bf92783f1ff9fba0a13288d516e941f5eef556586e93f",
+        "y_softmax": "2a76305c28be6c041d27e19333b11be82aaa9a132a139d8742ea68553c6a56be",
+        "y_scan": "d899dc50f62fe70b7578459f7e3cbf54c0f2c812c8723ac1a096c137e38eeadf",
+        "y_transpose": "a9b1df3ac4ce8c040eb38e32166db79443617fa5ecf694a9d6de0ef171c2cf65",
+        "sum": "3bf13a5f3f30c315b1f3528d3bde5a8d5554b2bbc1d1eef621ee2f0034a10b2e",
+        "max": "c9c5c791b5d944ad5c4a94a9219a45faf46ba8e177ad30d79c335f382e43d546",
+        "y_silu_gate": "e054aebe929d9fcc25231cdfd829d7c7765060e7117e39fd7007e52faec2f622"
+      }
+    },
+    {
+      "rows": 128,
+      "cols": 4096,
+      "seed": 33064213,
+      "up_seed": 33064214,
+      "sha256": {
+        "x": "5454e1c395a2fa6de568a1c461bdd3a09a6721ba3e281e7dc47e40f7257e4575",
+        "up": "189e945a56f4eb164ed1f5343636f1895d6bc487ba560bccc9e17bf2ca891104",
+        "y_softmax": "1a0a3092cf2bdf27cb12a93db459c3f54500359b1b7605f50db3789394a9d800",
+        "y_scan": "eb2f03338e5595c8b9993ced7c158f0ced2a34afe582797387fb1a54bdaccab7",
+        "y_transpose": "95145b1b8883c40664586612c3025914e3d3edc67582dea41860441d55bfa75c",
+        "sum": "a3fb08bdc6ee3f8ca166fd12e433c19f5d5c98117eefda1a6f755f9ec4c6042d",
+        "max": "4923bfad0dc81e015aac903b37f873dbb5001df4a69e5186934b17bc186bc5dd",
+        "y_silu_gate": "b7b6c1c982e62bdd5b328759a0c69f2d53fefc9d22ac7241ac0709058576f796"
+      }
+    },
+    {
+      "rows": 2048,
+      "cols": 127,
+      "seed": 225060244,
+      "up_seed": 225060245,
+      "sha256": {
+        "x": "cadc8a88d1721e2f6e3aba1be584a434a723b08946c0fa9b46a02c4897cf5e45",
+        "up": "6550954c379646e2ae655a74c86743926e3a11086873de621eafd59157fb89d9",
+        "y_softmax": "dd658d9a25cefa5f1337becbecc20c14defc76cd58c1c3199f79244aba441583",
+        "y_scan": "ca84e06aa3186b1fe595d95b7fbf802f52e495d5965bc993d8756c3efa1dfa0f",
+        "y_transpose": "5f91dab76fbebe9a31d410ac4ffefa9c5b8908a82d4d7fcf74e2bac9449859f7",
+        "sum": "1b43975325f181f8a7740538a9d0cb238f53d07e4413ec94fac63a05aa4b5ea7",
+        "max": "6738f9f08d4e9366dc967a7310c85175163761f96d3a18c85e616feac267cfce",
+        "y_silu_gate": "3cf97df8599f2ffa6b58fa7cffdeefd7b79452dbfd1daff1d1929ad667b9f268"
+      }
+    },
+    {
+      "rows": 2048,
+      "cols": 1024,
+      "seed": 225061141,
+      "up_seed": 225061142,
+      "sha256": {
+        "x": "0f12979fea3114eff7972a6284f1cf77d2b4c00a8e6e3f973b2d829585e468a7",
+        "up": "67de63eafa42c0d9444aee7ebc47b48882bf80478669ede60f7b5c7936295b78",
+        "y_softmax": "3aaefa33c5866372d7c0c0551a366b811055cadce5cc7e6cc64aecfeabcccee0",
+        "y_scan": "6fed1d0b587d7553680ac155c9e4975ab944c173af3abb89cc2bdecce3c0365b",
+        "y_transpose": "18e8c73d83f4e9dcd18e344beb31de2f869b6cdd4b65d5586c5f0b08998df999",
+        "sum": "5d0806d2da85826e8a948a18d9a55f95e11c86ebe32a7fbee829e875f1d6b746",
+        "max": "a992ef4cb53a90d49cbcdf18e5141712207aa6aed7f8a0064a49f3ba5b8dc679",
+        "y_silu_gate": "3d0e8c34c06a208e3699db68f96cfde367f4dcfb1a4decdef8014024ac215805"
+      }
+    },
+    {
+      "rows": 2048,
+      "cols": 4096,
+      "seed": 225064213,
+      "up_seed": 225064214,
+      "sha256": {
+        "x": "810ab971ac5d680e934b8791120060bfb1098d4b90e4130d62a5c246b4e489ca",
+        "up": "17598e872b9ee5a65ab64fd37b1ac1fdb9e977695fa8f1a26cc947e711e4b8dd",
+        "y_softmax": "2c1ffb3abd69c9de5c379293277d17277d886de4905c126f908cbe64c0b9fdb0",
+        "y_scan": "6379f6cb56f711241ca97d5f109096614fb97d861320bb64cfd7af45ef745352",
+        "y_transpose": "987232122b114f0953aa07bb1430eac895fb380ef55e0d73aca6338559129a4c",
+        "sum": "a8845dbd97e58010ac9f70b0e0bbb9ea96f17ab222d882018d0fa301d9497a43",
+        "max": "88b78ed607e04aefa997de1a9aad6760f03d43cb1f7d3d7db6fa83d05d0d187e",
+        "y_silu_gate": "d13d69a23b871b27247c8753db40be5209b82f4955082207d9c8a9b614aa1e8a"
+      }
+    }
+  ],
+  "stress_case": {
+    "rows": 4,
+    "cols": 1024,
+    "seed": 20260894,
+    "offset": 100.0,
+    "sha256": {
+      "x": "3a6465013e5f05ac7efdbc1fad4137b317dcd4c03c65959f26f89dc827beb054",
+      "y_softmax": "30fa4a7d2ad4c0b4c642a62246035d1be7fbf2fdaca17ce2fd4ea1030de288b4"
+    }
+  },
+  "npz_sha256": "291e3c9f5bcf24e11d007384baac6075ede03e534cf975837de9eccb95902335"
+}

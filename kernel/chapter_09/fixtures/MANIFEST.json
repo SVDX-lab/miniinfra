@@ -1,0 +1,11 @@
+{
+  "spot-rmsnorm-2048x1024.pt": {
+    "seed": 225062145,
+    "sha256_r": "8dd4ae623fadadc4f5a6079c3d332217e0e81a49d2b6fbf26cf9ad49d6c8713d",
+    "sha256_h": "0b784d49f8a9bb7dcb4a2c8faf01f4897da42140f94a4bd4bc972d91b11081ca",
+    "sha256_w": "988e253a0c747f9a24cf4933ffbf7bb57b3eaf95684e5e25e7baff379af24dfa"
+  },
+  "decode-step-inputs.json": {
+    "inputs_sha256": "61ea6d478d9b04f9a999552922213482582dfb6c7aabf2246219548427e1c293"
+  }
+}

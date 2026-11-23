@@ -1,0 +1,92 @@
+# 第 20 期实验合同：naive Attention——prefill 与 decode 双形态
+question: >
+  同一 Attention 语义（GQA + causal 稳定 softmax）的两种调用形态——prefill 整段与
+  decode 单 query——其计算强度（AI）随序列长度如何演化，"prefill 计算受限、decode
+  访存受限"能否用 roofline 推导 + 三平台实测达成率双重验证？tiling + online softmax
+  相对物化 S×S 矩阵节省多少 HBM 流量？
+hypothesis: >
+  prefill 理想 AI = (S+1)/3 FLOP/B（unique 口径，HQ=16/HKV=8/D=128/fp16）随 S 线性
+  增长，跨脊点（4090 fp16 ≈ 186.8、S4000 fp16 ≈ 90.7）于 S≈560/272；decode AI ≈ 2.0
+  （unique）/1.0（issued）恒定，深度 memory 区。每 Token KV 字节 = 2×8×128×2 =
+  4096 B/层（×28 层 = 112 KB/Token，附录 B 题 2）；decode kernel 的 DRAM 唯一流量
+  理论上恰为该 KV 字节 × B × N。物化变体额外流量 = 4×HQ×S²×itemsize（S=2048 B=4
+  约 2.1 GB），大 S 段延迟显著劣于 online 版。
+baseline: >
+  CPU FP32 朴素参考实现（显式减 max 稳定 softmax + causal mask + GQA repeat_interleave），
+  FP64 锚点另配；naive 物化对照变体（S×S 满阵三 kernel）为 online softmax 的对照基线。
+variant: >
+  (a) naive prefill kernel：tile(BR=16) + online softmax（K/V 按 BC=128 分块推进，
+  running max/sum/acc，-inf 守卫）+ causal early-termination；(b) naive decode
+  kernel：单 query、chunk=128 分块遍历、block 归约稳定 softmax；(c) 物化三 kernel
+  变体（对照测量）。warpSize-generic（32/128 双实例 + 设备探针）。
+single_variable: 调用形态与核组织（prefill-online / decode / 物化），语义、权重、
+  scale、shape 全部同一份（Qwen3-0.6B 维度合成数据）。
+invariants:
+  config: Qwen3-0.6B 官方 config.json 口径（与 ch01/ch02 模型 truth 体系互证）
+  config_values:
+    hidden_size: 1024
+    num_hidden_layers: 28
+    num_attention_heads: 16      # HQ
+    num_key_value_heads: 8       # HKV
+    head_dim: 128                # D
+    gqa_group: 2                 # q 头 h → kv 头 h//2
+    softmax_scale: 0.08838834764831845   # 1/sqrt(128)，官方 SDPA 默认
+  scale_note: scale 自带归一——q,k~N(0,1) 时 score~N(0,1)，softmax 非退化
+    （ch25"N(0,1)→one-hot"教训在 Attention 本体上不触发，无需 He 缩放，显式记录）
+  weights: 合成激活（非权重——Attention 本体以 Q/K/V 为输入），固定 seed，
+    fixtures 逐张量 SHA256 manifest；MUSA standalone 二进制以同算法 hash-RNG
+    自生成（manifest 记录算法与校验和 demo）
+  truth_dtype: FP64（CPU 锚点）+ FP32（CPU 真值锚点，fixtures 存档）
+  performance_dtype: FP16 主线 + FP32 对照（核 io 模板双实例，片上恒 fp32 累加）
+  fixtures_seed_base: 20261121
+  correctness_shapes: seq {64, 512, 2048} × batch {1, 4}（任务书矩阵）+ 边界
+    {1, 63, 65}（smoke/binary 矩阵）+ 长上下文 S=4096/N=32768（GPU eager 参考）
+  benchmark_shapes: prefill S {64, 512, 2048, 8192}，decode N {64, 512, 2048,
+    8192, 32768}，batch {1, 4}；物化 S {512, 2048}
+  timing: ch01 OperatorTimer 事件对逐样本、末尾一次同步，P50/P95；MUSA 列事件对
+    同口径（binary 内 musaEvent）
+  kernel_params: BR=16 / BC=128 / THREADS=128 / D=128 编译期固定（attention_config
+    单源，kernel_sim 按此仿真）
+  platform_peaks_denominator: chapter_01/performance 实测（4090 拷贝 918.8 GB/s / FP16 171.63 TF；
+    S4000 711.28 / 64.55；L2 72MB/24MB）——不重复测量
+  l2_note: prefill 工作集 S=2048 B=1 ≈ 6.3MB L2 区、B=4 ≈ 25MB 跨 S4000 L2 上限、
+    S=8192 B=4 ≈ 100MB DRAM 区（roofline_attention.working_set_region 分区标注）
+out_of_scope:
+  - 完整 FlashAttention（多 block 重缩放/共享内存流水/Tensor Core）——归算子篇
+  - KV 分页管理（第 21 期）、RoPE（第 22 期）、QKV 投影（第 17 期 GEMM 口径）
+  - split-K flash-decoding（第 24 期已实测，本期 naive decode 为其对照基线）
+  - 非连续布局（第 06 期口径）、PagedAttention 间接寻址
+correctness:
+  - 两形态 vs fixtures CPU FP32 真值（max/mean/rel/cos/NaN，容差分层 fp32≤5e-4、
+    fp16≤2e-2——输出幅度 ~0.3-0.5，fp16 档由输出舍入主导）
+  - FP64 锚点（fixtures 存档 + 归档完整性互验）与 FP32-vs-FP64 舍入量级
+  - naive loops 字面循环交叉验证（S=64/N=64，B=2≠HKV 回归防护）
+  - GQA 映射抽查（正向 = 逐头 kv[h//2] MHA 位级；反向错误映射灵敏度 >1e-3 拒绝）
+  - kernel_sim grid 覆盖断言（query 1:1、key causal 精确一次、尾部边界族
+    {1,15,...,512}、warp_size 32/128 双归约树一致）——ep26"循环界 bug 由
+    benchmark 抓出"教训的制度化
+  - 确定性：两形态 × 3 次位级比对（无原子、固定归约顺序）
+  - 合同校验显式报错（float64/dtype 不一致/非连续/头数不整除/head_dim≠128/N=0）
+metrics:
+  - AI 曲线（ideal-unique 与 kernel-issued 双口径）vs 平台脊点 → bound 分类
+  - 实测达成率双口径：带宽达成率（bytes_unique/P50 ÷ 918.8 或 711.3）与
+    算力达成率（FLOPs/P50 ÷ 171.63 或 64.55）→ 实测 bound 归属
+  - 每 Token KV 字节推导（4096 B/层；112 KB/Token/模型）vs decode kernel 实测
+    有效带宽对照（附录 B 题 2/7 校核；题 7 用 ch02 权重口径 1.19GB/步）
+  - 物化对照：额外字节 = 4×HQ×S²×itemsize，online vs 物化 vs SDPA 三方延迟
+  - seq 扫描延迟曲线（双平台、含 fp16/fp32）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  musa_plan: standalone binary（ch18 模式），共享 attention_kernels.cuh；
+    warpSize 双口径探针（M-11/M-20）为预期台账素材
+gpu_plan:
+  cpu: FP64/FP32 真值、fixtures、kernel_sim、CPU 延迟对照（本地 12 核）
+  one_gpu_cuda: build + smoke 28 + correctness 33 + benchmark 全扫描 + nsys 双 profile
+  one_gpu_musa: mcc build（回退链）+ attrs（warpSize 双口径）+ selftest +
+    correctness 矩阵 + benchmark 矩阵
+structural_diff_declaration: >
+  (1) 合成激活替代真实推理激活；(2) causal mask 按 HF 语义（key ≤ query），
+  无 mask 输入参数；(3) GQA 以 repeat_interleave 语义固定，无可配置映射；
+  (4) 核不做 QKV 投影与 RoPE（投影归 GEMM、RoPE 归第 22 期）；(5) prefill 假设
+  K/V 序列长 = Q 序列长（整段 self-attention），decode 假设单 query；
+  (6) kernel 头维 D=128 编译期固定（Qwen3 口径），H/B/S/N 运行期任意。

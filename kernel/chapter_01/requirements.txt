@@ -1,0 +1,5 @@
+# 第 01 期直接依赖。torch 按平台安装（CUDA: 官方 cu130 wheel；MUSA: 厂商 torch_musa wheel），不写入本文件。
+torch>=2.0
+numpy>=1.24
+safetensors>=0.4
+regex>=2023.0

@@ -1,0 +1,36 @@
+chapter: "16"
+title: 在线云端 Agent
+status: implemented
+question: |
+  如何服务云端 Agent 产品？
+hypothesis: |
+  异步任务模型（提交即返回、可轮询进度、断线重连、可取消、产物可下载、
+  用户与会话强绑定）在长任务下首响应从"任务完成时长"降到毫秒级，
+  且用户 A 无法凭会话/任务 ID 读取用户 B 的结果。若跨用户可读或取消后残留，则假设不成立。
+baseline: |
+  同步等待任务返回（HTTP 请求阻塞到轨迹全部完成）。
+variable: |
+  后台异步任务：任务线程执行轨迹，进度可查询、可取消（第 03 期 tree 清理）、
+  产物经第 05 期语义导出、任务归属用户 Token 校验。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  轨迹: 5 步固定录制轨迹（echo→写文件→sleep 1→写产物→sleep 1），模型接口不参与机制对照
+  用户: 两个假用户 token（course-local-fake）
+correctness_checks:
+  - 异步：提交即返回 task_id；进度随轮询单调增加（断线重连=重新轮询）
+  - 完成后产物可下载且内容正确
+  - 取消运行中任务：状态 cancelled、容器清理、进度停住
+  - 用户隔离：用户 B 的 token 访问 A 的任务/产物 → 404
+  - 同步模式：同一轨迹阻塞返回完整结果
+performance_metrics:
+  - 首响应：异步提交 ack vs 同步阻塞（P50/P95）
+  - 任务完成总时长（两模式应相近）
+  - 任务期间常驻容器数（等待步骤的空闲占用）
+fault_injection:
+  - 取消运行中的任务
+  - 跨用户访问
+exclusions:
+  - 不做 WebSocket/SSE 推送（轮询即"断线重连"的教学形态）
+  - 不接真实模型接口（体验性功能，不进机制对照）
+known_risks:
+  - 进度轮询间隔 0.2s，粒度较粗

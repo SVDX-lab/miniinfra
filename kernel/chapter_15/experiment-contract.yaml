@@ -1,0 +1,55 @@
+question: "改变权重的表示（FP16 → INT8 + per-channel scale）数学语义不变——'weight-only 量化省多少访存'与'反量化插在哪里（Kernel 内融合 vs 预物化）再省多少'是两个独立收益，本期限定在朴素 tiled GEMM 结构（ep18 同款）下把两者分开归因：误差分层（量化误差 vs kernel 实现误差）、延迟/有效带宽/权重显存三方对照、decode 单步端到端影响如何？INT8 相对 FP16 的理论 1:2 字节比例在 S4000 上兑现几成（接 M-24 转换管线先验）？"
+hypothesis:
+  - 误差分层（大纲 §9 行 476）：La1 仅量化误差（FP32 算术）显著大于 La3 FP16 存储误差（约 25-30×，随 K 增长）；La2（量化+FP16 权重存储）≈ La1（量化项主导）；GPU kernel 的 Lb 与 CPU La1 的差 = kernel 实现误差叠加量，预期 FP32 累加下 <1e-3 量级；
+  - 字节减半收益预期不按比例兑现（ep06 结论：S4000 FP16 与 FP32 kernel 同速，瓶颈非 DRAM；M-24：2 字节路径转换管线 ~500 GB/s 天花板）——decode 档（权重访存主导）比 prefill 档（launch/占用主导）更接近 1:2；
+  - 融合 vs 物化：融合路径省"物化后 FP16 权重的整遍读"，稳态延迟差 = 读取字节数差（KN 字节）的搬运时间；物化反量化本身是一次性成本（加载期账本），不计入稳态 decode；
+  - decode 小 batch（M=1~8）是 weight-only 的真实场景：S4000 launch 地板 ~28µs（M-10 系）会吃掉小形状收益的一部分；
+  - FP8 对照（4090 待补）：存储收益与 INT8 同量级（1 字节），差异在数值侧（E4M3 量化误差大于 INT8）与计算侧（FP8 Tensor Core）——prefill 侧收益大于 decode 侧（待 4090 实测）。
+baseline: CPU FP32 GEMM 真值（torch FP32，BLAS；fixtures 一次生成共用）+ 误差分层第 (a) 层（La1/La2/La3，CPU 列产出）+ FP16 权重 GEMM（同 tiled 结构，ep18 参照系：S4000 FP16 1024³ 64x64x8_reg4x4 = 0.73008ms / 2.94 TF）。
+variant: 同一 GEMM 语义 × 权重表示两态 × 反量化位置两态：{fp16 权重 GEMM（物化路径稳态）, int8_fused 融合反量化（融合路径）, dequant 物化 kernel（一次性成本，单独记账）} × 5 个 tile 配置（16x16x16_reg2x2 / 32x32x8_reg2x2 / 32x32x8_reg4x4 / 64x64x8_reg2x2 / 64x64x8_reg4x4）× 三平台列（cpu / musa / cuda 待补）。
+single_variable: 权重表示与反量化位置（tile 配置扫描时只变 tile/REG；两 kernel 的 FMA 主循环逐指令相同，唯一差异在 B-tile 加载端）。
+invariants:
+  quant_scheme: per-channel symmetric INT8（按输出通道 = W[K,N] 的 N 列）；scale[n]=max_k|W[k,n]|/127；q=clip(round(W/scale),-127,127)；dequant=q×scale；W4A16 记附录 A 考点不进实验
+  gemm_semantics: C[M,N] = A_fp16[M,K] · dequant(W, scale)[K,N]，行主序，FP32 累加，FP16 输出
+  weight_convention: 原始权重 = FP16 checkpoint 值 W16（W32=float32(W16)）；量化自 FP16 权重计算（服务化标准流程）
+  fused_vs_materialized_semantics: 融合路径 dequant 产物 FP32 直送累加（不落回 FP16 存储）；物化路径多一次 FP16 存储舍入（Ŵ16=half(q×scale)）——两者差 = FP16 权重存储舍入项，与 La1/La2 分层对应
+  fixtures_seed: 20261121（seed = SEED_BASE + M*100000 + K*100 + N，rng=numpy default_rng）
+  correctness_shapes: [4x8x4(tiny), 13x17x11(ragged), 1x1024x1024, 1x4096x4096, 4x4096x1024, 256x1024x1024, 1024x1024x1024]
+  benchmark_shapes: decode 档 {1,4,8}×{1024,4096}×{1024,4096}（12 组）+ prefill 档 {256,1024}×1024×1024（2 组）；权重 K×N 为主对象
+  decodeblock_proxy: Qwen3-0.6B 单 Block 6 投影链 {q:1024→2048, k:1024→1024, v:1024→1024, o:4096→1024, gate_up:1024→6144, down:3072→1024}（hidden=1024, 16 头×128, 8 kv 头, intermediate=3072）
+  tile_configs: [16x16x16_reg2x2, 32x32x8_reg2x2, 32x32x8_reg4x4, 64x64x8_reg2x2, 64x64x8_reg4x4]；最大静态 smem = 4384B（M-43 上限 28,672B 内）
+  nominal_bytes: fp16=A(MK×2)+W(KN×2)+C(MN×2)；int8=A(MK×2)+W(KN×1)+scale(N×4)+C(MN×2)；dequant=W(KN×1)+scale(N×4)+Wout(KN×2)
+  timing: GPU=二进制内部事件对（warmup 后逐样本 record→launch→record，末尾一次同步）；引擎锚点=OperatorTimer 事件对；报告 P50/P95/min/mean + 全样本
+  warmup_repeats: decode 档 warmup=20/repeats=100（MUSA 首轮 JIT 预热按 ch02 记录）；prefill 档 warmup=10/repeats=50(256³)/30(1024³)；decodeblock warmup=20/repeats=50
+  peaks_denominator: 第 01 期实测（S4000 拷贝 711.28 GB/s；4090 918.8 GB/s 待修复列）；GEMM 参照系用第 17 期朴素最优 tile 实测值（S4000 FP16 1024³ 64x64x8_reg4x4 = 0.73008ms / 2.9414 TF）
+  determinism: 无原子、固定累加序——int8_fused 连续 3 次运行位级一致
+out_of_scope:
+  - W4A16 / SmoothQuant（大纲附录 A 考点，不进实验）
+  - 激活量化（weight-only 限定；W8A8 引擎路径只做探测不进性能实验）
+  - cuBLAS/MIO 类厂商 INT8 GEMM 对照（S4000 引擎 INT8 路径实测为准，缺则记平台边界）
+  - FP8 性能对照（4090 待修复列：`torch._scaled_mm` NOT_SUPPORTED 旧实测沿用 + Triton FP8 dot 待试；S4000 无 FP8 硬件记平台边界）
+  - Tensor Core INT8（第 18 期 WMMA 对照接口复用）
+correctness:
+  - smoke 边界 8 项：全零列 scale 保护 / amax 归一化饱和性质 / K=1、N=1 退化 / 常数列方向恢复 / dequant 恒等误差 ≤ scale/2 / GEMM 误差累积上界
+  - kernel_sim 本地仿真：7 形状 × 5 配置 × 2 kernel 的 tiling/guard/网格覆盖断言（70 组 0 失败）+ 物化反量化位级
+  - fixtures 7 组 × 4 配置 × {fp16, int8_fused} vs CPU FP32 真值；误差分层 Lb/Lc 与 CPU La1/La2/La3 对齐归因
+  - 物化反量化 materialize 模式 vs CPU half(q×scale) 位级（允许 ±1 ulp RNE 差，>1 ulp FAIL）
+  - 确定性：int8_fused 连续 3 次位级一致（每 combo 每配置）
+  - fixtures 逐张量 SHA256 对拍（KI-21-06 教训条款，上服务器先验完整性）
+metrics:
+  - 分离 vs 融合：稳态延迟 P50/P95、有效带宽（名义字节口径）、权重显存占用（weight_mem_fp16 vs weight_mem_int8，int8 含 scale）
+  - 物化反量化一次性成本（dequant kernel 延迟与有效带宽）
+  - INT8/FP16 延迟比与字节比（1:2 理论）偏差及归因
+  - decodeblock 端到端链延迟（6 投影）与整步有效带宽
+  - 引擎 FP16 matmul 锚点（同 shape OperatorTimer）+ INT8 引擎路径探测（§14 准入第 9 条）
+  - 误差分层各层：max/mean 绝对误差、相对误差、余弦相似度、NaN/Inf、最大误差位置
+  - 寄存器/共享内存占用（attrs 模式 gpuFuncGetAttributes + 编译日志）
+  - 编译时间与首次运行时间
+migration:
+  target_hardware: 1×MTT S4000 48GB（本期主列）+ 1×NVIDIA RTX 4090 24GB【待修复，代码就绪】
+  correctness_profile: fixtures 7 组 × 4 配置 × 2 kernel + materialize 位级 + 3×确定性
+  common_benchmark_profile: decode 12 组 + prefill 2 组 × 2 kernel × 5 配置 + dequant 4 组 + decodeblock 3M×2×5
+gpu_plan:
+  cpu: 量化/反量化参考实现、误差分层第 (a) 层（La1/La2/La3）、真值 fixtures 生成（本地）、参考 GEMM 三版计时（信息性）
+  musa_s4000: build（回退链）→ selftest → attrs → 误差分层（Lb/Lc）→ 基准矩阵 → engine anchor + INT8 路径探测 → vllm-musa 量化算子调研（只读）→ 环境记录
+  cuda_4090: 同构 .cu 已就绪（implementations/cuda/ + build.sh）——【待 4090 修复后执行同 profile】；FP8 E4M3 框架见 implementations/cuda/fp8_placeholder/（回填位 A/B/C 批）

@@ -1,0 +1,104 @@
+# 第 03 期实验合同：融合 Residual Add + RMSNorm——为什么融合
+question: 融合 Residual Add + RMSNorm 在 CPU 串行、CUDA、MUSA 三个世界各省多少？理论节省（中间结果写回/读回 + 一次 Launch）与实测收益的兑现率逐平台是多少、被什么稀释？
+hypothesis: 融合的理论收益 = 省一次中间 Tensor t 的读回（n 字节，n=rows*H）+ 一次 Kernel Launch；DRAM 区大形状兑现率最高（带宽瓶颈直接位移 5n→4n），小形状被 launch 地板稀释（但融合恰好同时省一次 launch，小形状兑现率反而高）；CPU/NumPy 层收益为负（每条语句都物化，无法把 t 留在寄存器）；MUSA 因 launch 地板更大（~28µs vs ~21µs，M-12）融合的 launch 收益占比更大。
+baseline: 分离路径 = add kernel + 第 02 期 RMSNorm Kernel（2 launch，复用 ep03 产物，不重新发明）；CPU 分离版 = 两遍扫描（物化 t）。
+variant: CPU 分离/融合（serial + rowwise + torch 组合表达式）/ CUDA 分离（2 kernel）/ CUDA 融合（1 kernel）/ MUSA 同构迁移，同一语义同一 fixtures。
+single_variable: 组织方式（分离两 Kernel vs 单 Kernel 融合）；数值语义刻意保持一致（t 的 T 舍入 + 同 Tile 归约 → 分离与融合 y 位级一致，由实验证实）。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（仅 hidden_size=1024 参与 H 集合；本期不做模型级对照）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU 分离串行实现 separated_add_rmsnorm_serial，t=fl32(r+h) + naive_rmsnorm_serial 复用第 02 期）
+  truth_generation: 固定 seed 本地生成 + SHA256 清单（r/h 双流），随代码上传两台服务器共用
+  performance_dtype: FP16（主口径）+ FP32（对照）
+  fixtures_seed: 20260401（r: base+rows*1e5+H；h: +555555；w: base+H）
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]   # 1024 = Qwen3-0.6B hidden_size
+    rows: [1, 4, 128, 512, 2048]
+    combos: 30
+  benchmark_shapes:
+    contract: rows [1, 4, 128, 512, 2048] × H 1024
+    dram_probe:                                # 工作集（r+h+y+更新 r）> 平台 L2
+      - {rows: 8192, hidden_size: 1024, dtype: fp32}     # 128 MB（4090 L2=72MB）
+      - {rows: 32768, hidden_size: 1024, dtype: fp32}    # 512 MB
+      - {rows: 32768, hidden_size: 1024, dtype: fp16}    # 256 MB
+      - {rows: 65536, hidden_size: 1024, dtype: fp16}    # 512 MB
+  timing: OperatorTimer（事件对 + 末尾一次同步，统一 Warm-up/重复次数，P50/P95/mean/min）；独立 bench 二进制第二口径（nsys 被测对象）
+  peak_bandwidth:
+    denominator: "第 01 期实测 D2D 拷贝峰值（达成率分母单源）"
+    measured: {cuda: 918.8 GB/s, musa: 711.3 GB/s}
+    spec_reference: {cuda: 1008 GB/s, musa: 768 GB/s}
+  l2_cache_bytes_measured: {cuda: 75497472, musa: 25165824}   # ep03 实测（C API/torch props）
+operator_contract:
+  math: "t_i = r_i + h_i（FP32 加法、一次 T 舍入）；y_i = w_i * t_i / sqrt(mean_j(t_j^2) + eps)；平方和与均值 FP32 累加"
+  input_shape: "r/h [rows, H]，H ∈ [127, 2048]（实测集合见 correctness_shapes），行数任意（grid-stride）"
+  weight_shape: "[H]，与 r/h 同 dtype"
+  output_shape: "y [rows, H] 独立输出；residual 更新值写回（见 residual_semantics）"
+  stride: "本期只接受连续 Tensor（非连续显式检查/报错，第 06 期主题）；ctypes 直传 data_ptr，调用方保证连续"
+  residual_semantics: |
+    显式条目（大纲 §8"融合路径中的 Residual 更新语义与中间 Tensor 所有权"）：
+    - 融合 Kernel 采用 **in-place**：调用后 r buffer 内容 = t = r+h（T 舍入），
+      y 独立输出。选择理由：Transformer residual 流中更新后的 residual 正是
+      下一层输入，调用方无需再复制；与 vLLM fused_add_rmsnorm 同语义。
+      调用方需保留原 r 时先克隆再调用（torch r.clone()，语义等价 out-of-place）。
+    - 替代语义 **out-of-place**（返回新 tensor、原 r 保留）：仅在 CPU 参考实现
+      提供（fused_add_rmsnorm_out_of_place_serial），数学与 in-place 完全一致；
+      GPU Kernel 不实现该变体（多一次写，与融合动机相悖），由"调用方克隆"达成。
+    - 分离路径无原位修改：r/h 原样保留；中间 Tensor t 由调用方分配并持有
+      （所有权 = 调用方）；融合路径不物化任何新中间 Tensor（t 存在于寄存器/
+      shared memory，residual 更新复用 r buffer——所有权条目：无新分配）。
+  aliasing: "融合路径 r 即输入即输出（in-place 是合同显式行为，非 aliasing 意外）；r/h/w/y 四 buffer 必须互不相同；分离路径无 aliasing"
+  accumulation_dtype: FP32（加法结果 t 先按 T 舍入一次再累加——与分离路径"物化 t"的舍入语义一致，保证分离=融合位级可对齐）
+  intermediate_materialization: "分离：t 完整物化（显存/内存）；融合：t 仅存在于行内（寄存器/shared memory + residual buffer 的更新值）"
+  kernel_launches: "分离 = 2（add + rmsnorm）；融合 = 1；torch 组合表达式分离链 = 多 kernel（profiler 实测计数）"
+  vectorization: "指针 16B 对齐且 H % 向量宽度 == 0 时向量化（FP32: float4，FP16: uint4×8 half）；否则标量回退；add kernel 逐元素向量化 + grid-stride"
+  tile: "block 维度 = 编译期模板参数 {64,128,256,512,1024}，运行时 dispatch；MUSA 要求 tile 为 warpSize=128 整数倍（M-11 继承）"
+  shared_memory: "t 行缓存（H<=2048，8KB 上限）+ 跨 warp 归约暂存；H>2048 回退重读 global（此时 r buffer 已含 t）"
+  empty_tensor: "H=0 显式报错（状态码 2）；rows=0 不发射 Kernel 返回空 Tensor"
+  extreme_values: "FP32 输入平方和溢出（|t|>~1.8e19）→ scale=0 → y 全零（第 02 期同款）；FP16 加法溢出（r+h>65504）→ t=Inf → scale=rsqrt(Inf)=0 → y=Inf*0=NaN（如实记录：与分离路径行为一致，add kernel 产生相同 Inf t）"
+  nan_semantics: "输入 NaN 元素：t/residual 仅在 NaN 元素位置 NaN（加法逐元素）；平方和被污染 → 该行 y 全 NaN；其他行不受影响（CPU/GPU 三实现一致，冒烟实测）"
+  error_behavior: "Shape/dtype/设备/连续性/非法 tile 全部显式报错（extern C 状态码 1/2/3 → Python RuntimeError），无静默回退"
+  determinism: "同 Tile 同 Shape 同输入位级可复现；分离与融合同 Tile 位级一致（实测）；跨 Tile 可能位级不同（第 07 期主题）"
+  numerical_tolerance: "FP32 vs 真值 max_abs <= 1e-5（rsqrtf 近似 + 归约顺序）；FP16 vs 真值 max_abs <= 2e-2（dtype 主导，第 01 期容差依据）；分离 vs 融合：位级一致（合同要求，实验证实）"
+performance_model:
+  theoretical_bytes_separated: "(5*rows*H + H) × itemsize ——（读r+读h+写t）+（读t+读w+写y）"
+  theoretical_bytes_fused: "(4*rows*H + H) × itemsize —— 读r+读h+读w+写y+写r（原位更新）"
+  theoretical_bytes_saved: "rows*H × itemsize（省一次 t 的读回）≈ 分离流量的 20%（n>>H）"
+  note_on_outline_formula: "大纲行 694 的'省去 写t+读t'（2n）对应'不写回 residual'的破坏性语义；本合同 in-place 语义下净省 1n（写 t 变为写 r 更新）——Transformer 真实场景中分离路径的 t 本身就是下一层的 residual，故 in-place 是与生产语义对齐的比较口径；两种口径都记录"
+  theoretical_speedup_ceiling: "bytes_sep/bytes_fused（大形状 → 5/4 = 1.25）；小形状另受 launch 数 2→1 影响（地板模型：T ≈ max(bytes/BW, launches × launch_floor)）"
+  latency_lower_bound: "理论字节 / 平台峰值带宽（DRAM 区才有意义；4090 合同 Shape 工作集 < 72MB L2 时读数属 L2 区——ep03 方法学结论，本期以 DRAM 探针补真实带宽证据）"
+  compute_intensity: "~2.5 FLOP/元素，远低于任一平台脊点 => memory-bound（继承第 02 期结论）"
+  realization_ratio: "实测加速比 / 理论加速比上限（本期核心指标）；逐形状 × 逐 dtype × 逐平台记录"
+out_of_scope:
+  - 算子注册/TORCH_LIBRARY/torch_musa 扩展（第 04 期；本期 ctypes 直传 + 独立 bench）
+  - BF16/FP8 路径（第 05/15 期）
+  - 非连续布局（第 06 期）
+  - 原子归约与确定性对照（第 07 期）
+  - Graph 化前后的 launch 开销归因（第 09 期；本期只做 eager 口径 launch 计数）
+correctness:
+  - fixture SHA256 完整性（30 组 × 5 张量 r/h/w/t/y）
+  - CPU 串行真值自洽（分离位级；融合 in-place 位级）
+  - 手算例（2×4 硬编码）
+  - composite 分离链 FP32/FP16 vs 真值（30 组，平台原生路径延续）
+  - kernel separated（t 与 y）vs 真值（30 组 × fp32/fp16）：max/mean 绝对误差、相对误差、余弦相似度、NaN/Inf、最大误差位置
+  - kernel fused（原位 residual 与 y）vs 真值（30 组 × fp32/fp16）
+  - 分离 vs 融合位级一致（30 组逐组 + 确定性链）
+  - in-place 语义验证（调用后 r==t 真值；外部引用不受影响）
+  - 边界：双零行、NaN 传播、FP16 大数溢出（t=Inf→y=NaN）、H=0、rows=0、非法 tile
+metrics:
+  - 分离/融合延迟 P50/P95/mean/min；实测加速比；兑现率（核心）
+  - 有效带宽（按各自理论字节）与达成率（ch02 实测峰值分母）
+  - Kernel Launch 数（torch profiler：cuda kernel 事件 / musa musaLaunchKernel；+ 结构保证）
+  - DRAM 区探针（工作集 > L2）的真实带宽证据
+  - Tile 受控子实验 {128,256,512}
+  - launch 地板归因（rows=1 档）与稀释因素分析
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  model_policy: 本期不用模型权重（算子级实验）
+  migration_mode: M-17 ctypes 直传（kernel 库零 Runtime API；绑定层逐字节相同；build.sh 差异 = nvcc/mcc 与 arch 开关两处）
+  reuse: 第 02 期 rmsnorm_kernel 逐字复用（host 两处适配见 cross-backend-comparison.md）
+correctness_profile: 30 组 × {fp32, fp16} × {composite, kernel_separated, kernel_fused}
+common_benchmark_profile: 合同 5 行数 + 4 DRAM 探针 × fp32/fp16 × {separated, fused}
+gpu_plan:
+  cpu: 真值锚点 + fixtures 生成 + smoke + 串行/行向量化对照（本地）
+  one_gpu_cuda: build（nvcc）+ correctness + benchmark + launch 计数 + nsys kernsum/apisum
+  one_gpu_musa: build（mcc）+ correctness + benchmark + launch 计数（torch profiler）+ 平台边界记录

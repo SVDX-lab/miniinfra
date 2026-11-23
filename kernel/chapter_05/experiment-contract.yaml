@@ -1,0 +1,107 @@
+# 第 05 期实验合同：dtype 的选择与代价——FP32/FP16/BF16 三路径
+question: dtype 不只是精度——它同时决定访存字节、转换指令、Tensor Core 支持与数值行为（舍入/范围/溢出）。FP16 vs BF16 的位布局差（尾数 10 vs 7 stored）与指数范围差（bias 15 vs 127）在构造实验中如何表现？"理论字节比例 4:2:2"是否兑现为带宽/延迟比例？"累加必须 FP32"在 RMSNorm 上的定量代价是什么？
+hypothesis: (1) FP32:FP16:BF16 的理论字节比 4:2:2 在 4090 DRAM 区兑现为延迟比 ≈2:1:1（ch03 先验：DRAM 区 fp16=fp32 带宽≈916GB/s），在 S4000 不兑现（ch03 M-12 先验：FP16 路径瓶颈在转换/shared 管线）；(2) FP16 累加的平方和会溢出（H·scale²>65504）或"卡死"（ulp(acc)>增量），输出全零或大偏差；(3) bf16 在宽动态范围行上比 fp16 更准（小值分支）；(4) bf16 写回误差是 fp16 的 8 倍（2^-8 vs 2^-11）。
+baseline: 第 02 期手写 RMSNorm（fp32/fp16 两路径）+ CPU FP32 朴素串行真值（本期沿用同一 fixtures 数据口径，seed 规则一致 → 30 组输入位级相同）。
+variant: 同一 Kernel（warpSize-generic 模板）的三条 dtype 编译路径 × 两种累加 dtype（FP32 合同默认 / FP16 对照实现）。
+single_variable: 数值表示（存储 dtype 与累加 dtype）——访存组织/Tile/归约结构全部沿用第 02 期不变。
+invariants:
+  model: 不用模型权重（算子级实验；hidden_size=1024 = Qwen3-0.6B hidden_size 参与 H 集合）
+  rms_norm_eps: 1e-6
+  truth_dtype: FP32（CPU 朴素串行实现 naive_rmsnorm_serial，真值锚点）
+  truth_generation: 固定 seed 本地生成 + SHA256 清单（30 组 + 15 组 acc 构造输入），随代码上传两台服务器共用
+  performance_dtype: 三 dtype 全测（fp32/fp16/bf16），acc=fp32 主口径
+  fixtures_seed: 20260301（30 组合同 Shape）+ 20260601（acc 构造输入）
+  correctness_shapes:
+    hidden_size: [127, 128, 129, 1023, 1024, 1025]
+    rows: [1, 4, 128, 512, 2048]
+    combos: 30
+  benchmark_shapes:
+    rows: [1, 4, 128, 512, 2048]
+    hidden_size: 1024
+  byte_ratio_probe:
+    hidden_size: 2048
+    rows: [2048, 8192, 32768, 65536]   # L2 区 / 过渡区 / DRAM 区 / 同字节对照（fp16/bf16）
+    same_bytes_pair: {fp32_rows: 32768, fp16_or_bf16_rows: 65536}  # ≈537MB
+    platform_l2: {cuda: 72MB, musa: 24MB}  # C-API 实锤（ch03）
+  timing: 事件对 + 末尾一次同步，统一 Warm-up 与重复次数，报告 P50/P95/mean/min；GPU 另测 Graph Replay 口径
+  peak_bandwidth:
+    denominator: "第 01 期实测 D2D 拷贝峰值（达成率分母单源）"
+    measured: {cuda: 918.8 GB/s, musa: 711.3 GB/s}
+    spec_reference: {cuda: 1008 GB/s, musa: 768 GB/s}
+operator_contract:
+  math: "y_i = w_i * x_i / sqrt(mean_j(x_j^2) + eps)；平方和累加 dtype 编译期可选（FP32 默认 / FP16 实验对照），mean+eps+rsqrt 固定 FP32"
+  input_shape: "[rows, H]，H ∈ [127, 131072]（长 H 实验超 kMaxCacheElems 时 Pass 2 回退重读 global x），行数任意（grid-stride）"
+  input_dtype: {fp32: float32, fp16: float16, bf16: bfloat16}   # 三 dtype 同一 Kernel 模板
+  weight_shape: "[H]，与 x 同 dtype"
+  output_shape: "[rows, H]，与 x 同 dtype"
+  stride: 本期 Kernel 合同只接受连续输入（非连续显式报错，第 06 期主题）
+  aliasing: 无 aliasing；不修改输入
+  accumulation_dtype: 编译期 ACC ∈ {fp32, fp16}；ACC=fp16 时平方（__hmul）、每步累加（__hadd）、warp 蝶形、跨 warp 合并全部在 binary16 内舍入，仅 total→FP32 求 mean/eps/rsqrt
+  specialization_differences:
+    fp32: 直接读 float（零转换），全 FP32 计算，直接写回
+    fp16: 读 __half → __half2float 转 FP32 计算 → 写回 __float2half（RNE）
+    bf16: 读 __nv_bfloat16/__mt_bfloat16 → __bfloat162float 转 FP32 计算 → 写回 __float2bfloat16(_rn)（RNE）
+  vectorization: "指针 16B 对齐且 H % 向量宽度 == 0 时向量化（FP32: float4=4 元素，FP16/BF16: uint4=8 元素）；否则标量回退"
+  tile: 编译期模板 {64,128,256,512,1024}，运行时 dispatch；须为设备 warpSize 整数倍
+  empty_tensor: "H=0 显式报错；rows=0 返回空 Tensor（不发射 Kernel）"
+  extreme_values:
+    - "FP16 累加：|x|>~256 时 x² 逐项溢出为 inf（element 路径）；H·scale²>65504 时平方和溢出（sum 路径）；边界区串行累加可'卡死'（ulp(acc)>增量，冻结在 max 以下）→ 全部最终表现为 scale 异常（0 或偏差），输出全零/大偏差，无 NaN 传播"
+    - "FP32 累加：FP16 输入平方和（≤65504²×H）在 FP32 上不溢出；BF16 输入平方和至 1e30²×1024≈1e33 < 3.4e38 也不溢出"
+    - "BF16 存储范围 [~1e-38, ~3.4e38]：fp16 表示不了的量级（1e30、1e-30）正常进入计算"
+  nan_semantics: 输入 NaN 按行传播（该行全 NaN，其他行不受影响）
+  error_behavior: "Shape/dtype/设备/连续性/非法 tile/非法 acc 全部显式报错，无静默回退"
+  determinism: "同 Tile 同 Shape 同输入位级可复现（三 dtype 均实测）"
+  numerical_tolerance:
+    fp32_kernel_vs_truth: "max_abs <= 1e-5（rsqrtf 近似 + 归约顺序）"
+    fp16_kernel_vs_truth: "max_abs <= 2e-2（dtype 写回舍入主导；第 01/02 期容差依据）"
+    bf16_kernel_vs_truth: "max_abs <= 1e-1（尾数 8 位有效：写回舍入 ~2^-8 相对 = fp16 的 8 倍）"
+performance_model:
+  theoretical_bytes: "(rows*H*2 + H) × itemsize（读 x + 写 y + 读 w）；itemsize: fp32=4, fp16=2, bf16=2"
+  theoretical_byte_ratio: "同 Shape 下 FP32:FP16:BF16 = 4:2:2 → 字节减半，若 DRAM-bound 则延迟应减半"
+  same_bytes_pair: "fp32@32768×2048 = 536,879,104B ≈ fp16@65536×2048 = 536,875,008B —— 同字节不同 dtype/shape，DRAM-bound 时延迟应几乎相同"
+  latency_lower_bound: "理论字节 / 平台峰值带宽"
+  compute_intensity: ~2 FLOP/元素 → memory-bound（第 01/02 期已证）
+experiments:
+  exp1_bit_layout:
+    local_only: true
+    content: "位域分解（sign/exponent/mantissa 实拆）、格式边界双源核对、38 值构造表、8 区间随机舍入误差（上限 2^-11 vs 2^-8）、ulp 表（bf16/fp16 恒 8×）、整数精度边界（2049 / 257）、溢出/下溢行为（65536→fp16 inf；1e39→bf16 inf；1.4·2^-24→fp16 subnormal 相对误差 29%）"
+  exp2_correctness_30:
+    backends: [cpu, cuda, musa]
+    content: "三 dtype × {composite, kernel} × 30 组 vs FP32 真值：max/mean 误差、相对误差、余弦、NaN/Inf"
+  exp3_byte_ratio:
+    backends: [cuda, musa]
+    content: "L2/过渡/DRAM 区三 dtype 延迟与有效带宽；t_fp32/t_fp16 vs 2.0；同字节对照对；matmul TFLOPS 三 dtype（Tensor Core 支持探针）"
+  exp4_accumulation:
+    backends: [cpu, cuda, musa]
+    content: "ACC=fp32 vs fp16（存储固定 FP32）：大范数 scale 扫描（1..32）、长 H 扫描（1024..131072）、宽动态行；CPU 位精确模拟器三格式平方和诊断；先验对账（element/sum 两条溢出路径 + 卡死区归因）"
+  exp5_why_fp16:
+    content: "四维对照表：误差（exp2）、带宽（exp3）、Tensor Core（exp3 matmul 探针 + ch19 WMMA 仅 fp16）、范围风险（exp1/exp4）——主线选 FP16 的实验结论"
+out_of_scope:
+  - 模型级对照（第 04 期接回后另测）
+  - 非连续布局（第 06 期）
+  - 归约顺序的确定性专题（第 07 期，本期只记录串行/蝶形在卡死区的组织差异）
+  - INT8/FP8 量化（第 15 期）
+correctness:
+  - fixture SHA256 完整性（30 组 × 3 + acc 15 组 × 3 = 135 张量）
+  - CPU 串行真值自洽（位级）
+  - composite FP32/FP16/BF16 vs 真值（30 组 × 三后端）
+  - kernel FP32/FP16/BF16 vs 真值（30 组 × 三后端）
+  - acc 实验（15 组构造输入 × 三后端）：zeroed_rows 先验对账 + 卡死区归因
+  - 宽动态行（4 组）：小值分支 fp16 vs bf16 相对误差（bf16 更准验证）
+  - 确定性：同 Tile 3 次位级（fp16/bf16）
+  - 边界：全零行、NaN 行、FP16 大数、BF16 大数/小数、fp16 小数下溢对照、H=0、rows=0、非连续、非法 tile、ACC=fp16 溢出行、非法 dtype
+metrics:
+  - Kernel 延迟 P50/P95/mean/min（三 dtype）；有效带宽与达成率
+  - 理论字节比例兑现度：t_fp32/t_fp16 / 2.0（L2 区 vs DRAM 区分别归因）
+  - 同字节对照对延迟比
+  - matmul 三 dtype TFLOPS（Tensor Core 支持探针）
+  - 编译时间与首次运行时间
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  model_policy: 本期不用模型权重
+  correctness_profile: 30 组 × 3 dtype × {composite, kernel} + 15 组 acc
+  common_benchmark_profile: 合同 Shape 三 dtype + byte_ratio_probe + matmul 探针
+gpu_plan:
+  cpu: 真值锚点 + fixtures + smoke + 位布局实验 + 累加深挖 + 模拟路径对照（本地全量）
+  one_gpu_cuda: build（nvcc）+ 30 组×3 dtype correctness + acc 链 + benchmark（合同 Shape + byte_ratio_probe + matmul）+ nsys 证据
+  one_gpu_musa: build（mcc）+ 同 CUDA 列口径；nsys 不可用 → 端到端对账（ch02 先验）

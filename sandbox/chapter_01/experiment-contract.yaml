@@ -1,0 +1,53 @@
+# 第 01 期实验契约（先写设计，再动手——experiment-protocol.md 第 1 节）
+chapter: "01"
+title: 最小执行闭环
+status: implemented
+question: |
+  一次工具动作怎样成为可核对的命令执行结果？
+hypothesis: |
+  用受约束的一次性容器执行命令，可以完整回收 stdout/stderr/退出码并在停止后零残留；
+  引入隔离环境的单命令开销相对本机直接执行为百毫秒级（待实测验证，可证伪：
+  若残留容器非零、退出码/输出丢失、或开销秒级，则假设不成立）。
+baseline: |
+  本机直接执行同一组固定可信命令（subprocess，不含任何 Agent 代码），
+  仅用于量出"引入隔离环境"的启动/执行开销。两组命令序列完全相同。
+variable: |
+  本期为原始系统（建立一次性容器 baseline），不引入后续期机制。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  container_constraints:
+    - network none / read-only rootfs / tmpfs /tmp(16m,noexec)
+    - user 65534:65534 / cap-drop ALL / no-new-privileges
+    - memory 256m / cpus 1 / pids-limit 64
+  workload: 固定短命令序列（echo、printf、exit N、写读文件、sleep）
+  cache_state: 镜像已预拉取（暖缓存）
+workload_manifest:
+  - W1 echo: ["echo", "hello"]
+  - W2 exit3: ["sh", "-c", "exit 3"]
+  - W3 stderr: ["sh", "-c", "echo o; echo e >&2; exit 1"]
+  - W4 write_read: ["sh", "-c", "printf abc > f.txt"]
+  - W5 sleep: ["sleep", "5"]（配 700ms 超时）
+  - W6 missing_image: 镜像 nonexistent:latest
+correctness_checks:
+  - 正常命令退出码 0、stdout 完整
+  - 非零退出码透传
+  - stdout/stderr 分离
+  - 工作区写读一致（files 列表 + 内容）
+  - 超时命令被终止，无容器残留
+  - 停止会话时执行中的命令被取消，容器与工作区归零
+  - 容器启动失败（镜像不存在）归类 env_prep_error，服务不崩溃
+performance_metrics:
+  - create→首条命令可用延迟
+  - 单命令端到端延迟：本机基线 vs 直连容器 vs 经 API 容器（P50/P95）
+  - 开销分解：容器引入的差值、HTTP 引入的差值
+fault_injection:
+  - 命令超时（sleep 超过 timeout_ms）
+  - 镜像不存在
+  - 执行中停止会话
+exclusions:
+  - 不做多会话并发与调度（第 12 期）
+  - 不做流式输出与回压（第 08 期）
+  - 本机基线只运行固定可信命令，不用于不可信代码
+known_risks:
+  - WSL2 下容器启动开销波动较大，数字仅适用本机
+  - stderr 中容器输出与 docker 自身错误混合，v1 按 docker 退出码 125 区分

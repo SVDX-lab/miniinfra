@@ -1,0 +1,80 @@
+question: 数据进出设备的传输路径（pageable/pinned/异步/多 stream）如何量化，传输-计算重叠能把端到端时间压到什么程度、离 max(传输,计算) 理论上限差多少、差距由什么构成？
+hypothesis: >
+  pinned 内存显著抬高 H2D/D2H 带宽（大纲"量级差异通常数倍"预期在 1MB~1GB 扫描中
+  实测校准）；双 stream 分块流水线能把"传输+计算"压缩到逼近 max(T_transfer,
+  T_compute)，剩余稀释来自流水线填充/排空尾部、per-op launch 地板（M-12：
+  MUSA ~28µs）与 Host 发射速率。MUSA 传输 API 命名（mus* vs musa*）与多流语义
+  （ep05 未决 3）给出实机结论。
+baseline: 同步 cudaMemcpy + pageable host 内存（三级递进的 (a) 档）。
+variant: |
+  (a) 同步 cudaMemcpy 基线；
+  (b) cudaMemcpyAsync + pinned（cudaMallocHost / cudaHostAlloc[Default/Portable/Mapped]）；
+  (c) 分块 + 双 stream 传输/计算重叠（传输 stream + 计算 stream，每 chunk 深缓冲，
+      事件依赖三段式发射）；
+  (d) ratio ∈ {0.25, 1, 4} + natural（K=1）四场景（K 轮 RMSNorm 校准计算负载），
+      分块 {1,4,16,64,256} MB 扫描。
+single_variable: 传输组织方式（pageable/pinned × sync/async × 分块/双 stream 流水线）。
+invariants:
+  seed: 20260909
+  compute_kernel: 第 02 期 RMSNorm（CUDA/MUSA 两版逐字节复制）
+  rmsnorm_kernel_sha256:
+    cuda: 0a7ccff36a46f2a6fe070ffb54c152a7caa90f033a2803d4a5580be3a3e4aa78
+    musa: a4f7746e133e25416f959fa84830528fb98ff256b010e526a31fdea734aaf671
+  dtype: FP32 全路径（归因分离声明：ep06 M-26 的 S4000 2 字节转换管线天花板不进本期传输口径）
+  hidden_size: 1024
+  rmsnorm_tile: 256
+  rmsnorm_eps: 1e-6
+  bandwidth_sizes_mb: [1, 4, 16, 64, 256, 512, 1024]
+  alloc_sizes_mb: [16, 256, 1024]
+  payload_mb_scenario: 512
+  chunk_mb_scenario: 16
+  chunk_sweep_mb: [1, 4, 16, 64, 256]
+  sweep_payload_mb: 256
+  ratios: [0.25, 1, 4, natural]
+  timing:
+    设备侧: 事件对（同步 API 挂 NULL/legacy 流，异步 API 挂自建流），链级而非单 op
+    Host 侧: perf_counter 双口径对账（分配/发射/同步往返）
+    repeats: 带宽 10+3warmup / 流水线 7+2warmup，报告 P50/P95/min
+  correctness: overlap 流水线 vs 单流串行 位级一致（memcmp，零拷贝）
+  no_cpu_column_declared: 期首声明（README），Host 侧只做计时基准
+  platform_denominators:
+    cuda_d2d_peak_gbps: 918.8   # chapter_01/performance/measure_peak.py 单源引用
+    musa_d2d_peak_gbps: 711.3   # 同上
+    musa_launch_floor_us: 28    # M-12（本期实测复核）
+out_of_scope:
+  - CPU 列（期首声明）
+  - FP16/BF16 传输路径（dtype 归因分离，见 ep06 M-26）
+  - 多卡/NCCL/P2P（单卡）
+  - GPUDirect/RDMA（无对应硬件路径）
+  - cuda Graph 捕获传输（第 09 期）
+correctness:
+  - smoke：memcpy H2D→D2H 往返位一致（pageable/pinned 各一）
+  - RMSNorm kernel vs CPU FP32 参考真值（fixtures，ch03 同语义，rel<1e-4）
+  - async+事件次序链数值正确
+  - 最小重叠（2 chunk K=2）位级一致
+  - 全量场景/分块扫描每配置 overlap vs serial 位级一致
+metrics:
+  - H2D/D2H 带宽（GB/s，pageable vs pinned×3 来源 × sync/async，1MB~1GB）
+  - pinned/pinned 注册/设备/缓存分配器分配耗时（P50/P95）
+  - 首次传输 vs 稳态（fresh 缓冲 5 次，first_over_steady 比值）
+  - 重叠加速比 = T_serial/T_overlap；理想 = T_serial/max(T_transfer,T_comp)
+  - 重叠效率 = max(T_transfer,T_comp)/T_overlap；稀释归因（launch 地板×n_ops、
+    填充/排空尾、Host 发射速率、发射瓶颈判定）
+  - 每块 PCIe 效率（chunk 尺寸扫描下的 per-chunk H2D/D2H 时间）
+  - nsys 时间线并行区间（intersect_busy_ms / 并行窗口数）
+  - MUSA API 命名 grep+编译探测表（mus*/musa* 双族）
+  - 多流语义六项探测（T1–T6）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  model_policy: 不涉及模型（纯传输/管线实验）；RMSNorm kernel 为第 02 期复用
+  correctness_profile: 上述 correctness 五条全过
+  common_benchmark_profile: 1MB~1GB 带宽扫描 + ratio×chunk 全矩阵
+gpu_plan:
+  cpu: fixtures 生成（本地）、Host 侧计时基准（任一机器）
+  one_gpu_cuda: 4090 全套（带宽/分配/重叠/nsys/topo）
+  one_gpu_musa: S4000 迁移版（API 命名探测/带宽/重叠/stream 探测/拓扑探测）
+acceptance_questions:  # 大纲行 791，验收四问（EXPERIMENT_LOG 末节逐条数据回答）
+  - 为什么第一次跑特别慢
+  - pinned 的代价是什么（分配慢、不可换页）
+  - 重叠收益的上限怎么算
+  - 什么时候该把数据留在设备上

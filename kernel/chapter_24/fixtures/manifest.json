@@ -1,0 +1,501 @@
+{
+  "schema_version": "kernel-chapter25.fixtures.v1",
+  "seed_base": 20260325,
+  "seed_x": 20260326,
+  "seed_rule": "torch.Generator.manual_seed；权重=SEED_BASE+权重名字典序序号；x=SEED_X；N 组=SEED_BASE+1000+N",
+  "rng": "torch.randn (Mersenne Twister via torch.Generator, CPU) × He 缩放 (std=1/sqrt(fan_in)，fan_in=shape[0]；理由见 make_weights docstring：N(0,1) 会使 softmax 退化为 one-hot)",
+  "torch_version": "2.6.0+cpu",
+  "portability_note": "portable=true 的张量是纯 RNG 输出，跨 torch 版本重建SHA256 一致；portable=false 的真值/探针张量依赖生成机器的 torch CPU kernel（einsum 分块/线程），跨版本会有 FP32 舍入级差异——verify-only 只核对 portable 张量，真值以随仓库分发的 npz 文件本身为准",
+  "portable_keys_rule": "weight_* / x / n*_c_kv / n*_k_rope_raw / n*_positions",
+  "config": {
+    "d_model": 2048,
+    "n_heads": 16,
+    "q_lora_rank": 1536,
+    "kv_lora_rank": 512,
+    "qk_nope_head_dim": 128,
+    "qk_rope_head_dim": 64,
+    "v_head_dim": 128,
+    "softmax_scale": 0.07216878364870322,
+    "rope_theta": 10000.0
+  },
+  "config_source": {
+    "kv_side": "https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/raw/main/config.json",
+    "q_lora_rank": "https://huggingface.co/deepseek-ai/DeepSeek-V2/raw/main/config.json",
+    "softmax_scale": "https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/raw/main/modeling_deepseek.py (L745: q_head_dim**-0.5)",
+    "note": "V2-Lite q_lora_rank=null（无 Q 低秩）；1536 取自 DeepSeek-V2 config，任务书指定，混合口径已声明",
+    "fetched_at": "2026-11-21"
+  },
+  "kv_lens": [
+    1,
+    3,
+    33,
+    128,
+    2048
+  ],
+  "bench_kv_lens_runtime_only": [
+    1,
+    128,
+    2048,
+    32768
+  ],
+  "truth_implementation": "mla_decode_unabsorbed (FP32 CPU) + FP64 锚点 mla_decode_unabsorbed(float64)；吸收形式 FP32 同时记录",
+  "rope_convention": "Llama/HF 半分约定（x1=x[..,:32]），freqs=theta^(-2i/64)。",
+  "scale_note": "softmax_scale=1/sqrt(192)=官方 modeling_deepseek.py L745 q_head_dim**-0.5；两种形式共用，等价性与 scale 取值无关",
+  "tensors": {
+    "weight_W_KVA": {
+      "shape": [
+        2048,
+        576
+      ],
+      "dtype": "torch.float32",
+      "sha256": "433399b5a8560cf6f372e6205b6da4698b945748a52ec62e3765b9337eea09f0",
+      "portable": true
+    },
+    "weight_W_O": {
+      "shape": [
+        2048,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "3fa187627b57e4c32695c258954dd2d76583dcb7d7671d7c48d8c63f1de8bc17",
+      "portable": true
+    },
+    "weight_W_QA": {
+      "shape": [
+        2048,
+        1536
+      ],
+      "dtype": "torch.float32",
+      "sha256": "2bea1a2282137aa15eb52bc87583aeeb7a9657f56de5f2d6139b077fec10a488",
+      "portable": true
+    },
+    "weight_W_QB": {
+      "shape": [
+        1536,
+        3072
+      ],
+      "dtype": "torch.float32",
+      "sha256": "c50fee84fe4ae8e802cee1d5d47e5cad29fc9e459595860789dd6be54546cb62",
+      "portable": true
+    },
+    "weight_W_UK": {
+      "shape": [
+        16,
+        512,
+        128
+      ],
+      "dtype": "torch.float32",
+      "sha256": "93092c3111caa789269f9423c98b39b42b1325969a35e6a11f239f6d17147c10",
+      "portable": true
+    },
+    "weight_W_UV": {
+      "shape": [
+        16,
+        512,
+        128
+      ],
+      "dtype": "torch.float32",
+      "sha256": "51db0603556593c54f5e1d06691a15c75480404a725599fe34f861a6c4227303",
+      "portable": true
+    },
+    "x": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "ce403e56039fddf23b47a75c499ff422f3d489be90993bae0116c99beed5b1c8",
+      "portable": true
+    },
+    "n1_c_kv": {
+      "shape": [
+        1,
+        512
+      ],
+      "dtype": "torch.float32",
+      "sha256": "ef01d5573c0c23758f5fca07356d674da507e1ab1f61d709178d922a1d3441ee",
+      "portable": true
+    },
+    "n1_k_rope_raw": {
+      "shape": [
+        1,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "65d6179a670877521dd2220d0d64279bbcd5f5bc1b7c482f1e70f3f0b5787c94",
+      "portable": true
+    },
+    "n1_k_rope_rot": {
+      "shape": [
+        1,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "65d6179a670877521dd2220d0d64279bbcd5f5bc1b7c482f1e70f3f0b5787c94",
+      "portable": false
+    },
+    "n1_positions": {
+      "shape": [
+        1
+      ],
+      "dtype": "torch.float32",
+      "sha256": "1d571ca03eabe322a8c70399ddf46f1e271d4f5ac271026cb5dadae343049f06",
+      "portable": true
+    },
+    "n1_out_unabs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "9e9c5639868c2455a5ab8eea6a7f23ac2de9055bf9a48dd52dcaa036431521ac",
+      "portable": false
+    },
+    "n1_out_abs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "9e9c5639868c2455a5ab8eea6a7f23ac2de9055bf9a48dd52dcaa036431521ac",
+      "portable": false
+    },
+    "n1_out_truth_fp64": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float64",
+      "sha256": "6eaf7f4633a7f3c8191ca1ec2a095b77e91c0cc9e606d59435e0068824c0c063",
+      "portable": false
+    },
+    "n1_scores_head0": {
+      "shape": [
+        1
+      ],
+      "dtype": "torch.float32",
+      "sha256": "4e876addba2a1a36582a1adcb3f55ad71cda905144f30f24a2862e73856b97bf",
+      "portable": false
+    },
+    "n1_attn_head0": {
+      "shape": [
+        1
+      ],
+      "dtype": "torch.float32",
+      "sha256": "877019ff04ed6527607e8b3d18218d1c2c778cefa0177e225dca75ba008cac68",
+      "portable": false
+    },
+    "n3_c_kv": {
+      "shape": [
+        3,
+        512
+      ],
+      "dtype": "torch.float32",
+      "sha256": "42ec4f3b78eaecb87f43a5065cad30b777fb5c1556f86398b76e26019b661ba1",
+      "portable": true
+    },
+    "n3_k_rope_raw": {
+      "shape": [
+        3,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "e0387a2d02e8157c87b272619cdc0df477c8b0d7b6af2936704ed8385b8ac284",
+      "portable": true
+    },
+    "n3_k_rope_rot": {
+      "shape": [
+        3,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "6f0500bed64ad6f40c58ed5d6d6261ff927361cd8a6e7c7d540894f2e29e3af1",
+      "portable": false
+    },
+    "n3_positions": {
+      "shape": [
+        3
+      ],
+      "dtype": "torch.float32",
+      "sha256": "53ccd417cb15012116d4f83d99f61675ac4f575f5bb3a004cedb09b9e9c2c54e",
+      "portable": true
+    },
+    "n3_out_unabs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "6895acebb02ddbfb05b6adcfaff360e5ec132c70307068710f777fbabc4bb817",
+      "portable": false
+    },
+    "n3_out_abs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "6b6733996d3b564c72202c5855f28cc7d454cf88f2234d24eb685867f9ae294f",
+      "portable": false
+    },
+    "n3_out_truth_fp64": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float64",
+      "sha256": "8284bcda48a4debd077ad75546db7599f31be65e8bfcf4196d2c434333d74302",
+      "portable": false
+    },
+    "n3_scores_head0": {
+      "shape": [
+        3
+      ],
+      "dtype": "torch.float32",
+      "sha256": "15af90c334481c5967e9c4c8c098646a50f4003a7d0b600d0913772cac2709fb",
+      "portable": false
+    },
+    "n3_attn_head0": {
+      "shape": [
+        3
+      ],
+      "dtype": "torch.float32",
+      "sha256": "aa8145028d6dd4a261f357c6cecaf74b1ac7f9f9df1d47b564bb93a6ce74322b",
+      "portable": false
+    },
+    "n33_c_kv": {
+      "shape": [
+        33,
+        512
+      ],
+      "dtype": "torch.float32",
+      "sha256": "76a37eeca892704a9898fb1fd8c5feb3867b3bbc0e48f03b23fb577e28cd35af",
+      "portable": true
+    },
+    "n33_k_rope_raw": {
+      "shape": [
+        33,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "ba0cab63da04c6a9ab7a77da0a444956359647777a98b4d5f1c64038123b12fc",
+      "portable": true
+    },
+    "n33_k_rope_rot": {
+      "shape": [
+        33,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "d0dd343773fe1a1cd5dd90a4a3278d2c2699d7b31459d7be0a47306c0f505663",
+      "portable": false
+    },
+    "n33_positions": {
+      "shape": [
+        33
+      ],
+      "dtype": "torch.float32",
+      "sha256": "a12debfd73955cf894695f4cf7b26e4036610dacdaeb68c64b822eb84d20eafa",
+      "portable": true
+    },
+    "n33_out_unabs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "99cfbc19d7646c770b6d9ca94e60ede4bc3af8755acaefff879de0d7385ba27a",
+      "portable": false
+    },
+    "n33_out_abs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "500607efaba7193257c71d6004cf6bdada1913f6fd0a9e67a0b4fee43b4e3125",
+      "portable": false
+    },
+    "n33_out_truth_fp64": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float64",
+      "sha256": "b01f48962ef64e3d8b315f560a7d9f7115974a69cf7e8b2dacc01f9a3426512c",
+      "portable": false
+    },
+    "n33_scores_head0": {
+      "shape": [
+        33
+      ],
+      "dtype": "torch.float32",
+      "sha256": "7ab5ed3797c533dc465893c53a15f19e341ca7596f5bac0d80ae9e7b2427aaaf",
+      "portable": false
+    },
+    "n33_attn_head0": {
+      "shape": [
+        33
+      ],
+      "dtype": "torch.float32",
+      "sha256": "b241836eb67df8e3d0c5339c47792a6891677d02e5c7597ea4650bd2dd98e6e6",
+      "portable": false
+    },
+    "n128_c_kv": {
+      "shape": [
+        128,
+        512
+      ],
+      "dtype": "torch.float32",
+      "sha256": "52e326a3032e25a660fa85b4cd47285646c109ca4010b674ce81f1fef32cc4ea",
+      "portable": true
+    },
+    "n128_k_rope_raw": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "0394f03f3e5f2f28c3c60424d145726401715732bf06cea86e1ecd202cf32d43",
+      "portable": true
+    },
+    "n128_k_rope_rot": {
+      "shape": [
+        128,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "966bf4ca8d24a6243239f311c64efb4a808c11af22801e4d495711af95676ba9",
+      "portable": false
+    },
+    "n128_positions": {
+      "shape": [
+        128
+      ],
+      "dtype": "torch.float32",
+      "sha256": "f4115d590af7b683c6a87ad2160d63bdb10a8fe8de20cf4baab9cb025c50fdca",
+      "portable": true
+    },
+    "n128_out_unabs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "7d90cd074588ae7ecd7c59b58a43a61a440940994052c884cba64e2ef7d33a1e",
+      "portable": false
+    },
+    "n128_out_abs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "cea32f00df2600e63f94f8f5f67a0e51d43dc0ff37464b5c3ef81402dd06050f",
+      "portable": false
+    },
+    "n128_out_truth_fp64": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float64",
+      "sha256": "f94375087062e38362ef816e50a7914d0bef5fead9a12075a516c7e4c87f2c7b",
+      "portable": false
+    },
+    "n128_scores_head0": {
+      "shape": [
+        128
+      ],
+      "dtype": "torch.float32",
+      "sha256": "d4b1565c4c66e766746cd2bd6e5d1389e001afbcd05ea84a4bbc9eaf878b962e",
+      "portable": false
+    },
+    "n128_attn_head0": {
+      "shape": [
+        128
+      ],
+      "dtype": "torch.float32",
+      "sha256": "c2415a46cdffb759bd5bc9a0b7ac9cc424e4e585ff99b9c7de51d5b09c708e69",
+      "portable": false
+    },
+    "n2048_c_kv": {
+      "shape": [
+        2048,
+        512
+      ],
+      "dtype": "torch.float32",
+      "sha256": "c8359c37724d3601ce81ba1ab6ffba99a9f130ca7a503a6a76de2492cd9a333c",
+      "portable": true
+    },
+    "n2048_k_rope_raw": {
+      "shape": [
+        2048,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "40fa47eb90d55f6a6a28ec4a82b184ede07b476c58eab3bdd33166fe1c788b94",
+      "portable": true
+    },
+    "n2048_k_rope_rot": {
+      "shape": [
+        2048,
+        64
+      ],
+      "dtype": "torch.float32",
+      "sha256": "8de5c689b6d062561e2028402fa791bea5cf281acf3fc4343b966e3a5d5feb2d",
+      "portable": false
+    },
+    "n2048_positions": {
+      "shape": [
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "b9a0264854fa02458daac1f63677a7db82d1ee14e94fa85e765a74f85d584314",
+      "portable": true
+    },
+    "n2048_out_unabs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "654665afa287579ff32322fcf756a4bfb6183138f9cdd2e513c0afc1754e8243",
+      "portable": false
+    },
+    "n2048_out_abs_fp32": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "7525300a854d4fa523ceee2829236350b6258ffdf983af6e4e78140b1e3bafa1",
+      "portable": false
+    },
+    "n2048_out_truth_fp64": {
+      "shape": [
+        1,
+        2048
+      ],
+      "dtype": "torch.float64",
+      "sha256": "c194f002ec39332413e6a8f4609e565586964b26a17bf2753b2ec7c84de6ea11",
+      "portable": false
+    },
+    "n2048_scores_head0": {
+      "shape": [
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "c7c0bf73fbd1f311c963734c870afb1e390ab9b235c080dcbd37104b14315fc2",
+      "portable": false
+    },
+    "n2048_attn_head0": {
+      "shape": [
+        2048
+      ],
+      "dtype": "torch.float32",
+      "sha256": "791521a2e1699553b6988120ba1874e09abf43e65e702ca92bd5623fd1d89102",
+      "portable": false
+    }
+  }
+}

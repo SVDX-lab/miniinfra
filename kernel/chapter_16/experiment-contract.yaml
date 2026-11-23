@@ -1,0 +1,41 @@
+# 第 16 期实验合同：进阶手撕算子 I——归约、访存与逐元素
+question: 第 01–01 期建立的合同/正确性/roofline 方法论能否平移到面试高频算子？归约、重排、前缀依赖、逐元素链四类访存形态在 CPU/CUDA/MUSA 三平台的达成率与 bound 归因是什么？
+hypothesis: 五个算子的手写 Kernel 在三平台均可过 CPU FP32 真值容差；访存受限算子在大 shape 下有效带宽达成率应显著高于第 01 期组合表达式（无框架调度与多余读写）；transpose 的 tile+padding 相对朴素版可实测出 bank conflict 差距；scan 的两种组织各有延迟/工作效率的取舍可实测。
+baseline: implementations/cpu/ops_reference.py（NumPy FP32 朴素参考，真值锚点）
+variant: 五算子 × 变体（softmax kernel；reduce sum/max/sum_max；transpose naive/tiled_pad/tiled_nopad；scan Hillis-Steele/Blelloch；SiLU+Gate separated/fused/fused_v4）× 后端（cpu/cuda/musa）
+single_variable: 实现组织方式（同一语义、同一 dtype FP32、同一 fixtures）
+invariants:
+  fixtures_seed: 20260117（NumPy PCG64；seed = SEED_BASE + rows*100000 + cols；up 用 seed+1；跨机一致由逐张量 SHA256 校验兜底）
+  shapes_rows: [1, 128, 2048]
+  shapes_cols: [127, 1024, 4096]
+  dtype: float32（正确性与性能同 dtype；FP16 留给第 05 期口径）
+  timing: 事件对/同步边界校准后统一 Warm-up 与重复次数，报告 P50/P95（ch01 口径）
+  peak_bandwidth_gb_s: {cuda: 1008, musa: 768}
+  kernel_binding: C ABI 共享库 + ctypes（显存/同步在 torch 侧，Kernel 库零 Runtime API 调用）
+correctness:
+  - 五算子手算极小例（硬编码数值）vs NumPy 参考（smoke_test）
+  - softmax 数值稳定性：x+100 压力例（朴素版溢出 vs 稳定版正常）
+  - 9 Shape × 5 算子 × 全变体 vs CPU FP32 真值（cosine≥0.9999 且无 NaN/Inf 判据）
+  - transpose 位级相等（纯重排）
+  - 每变体连续 3 次位级确定性比对
+metrics:
+  - 每算子每变体 P50/P95/min/mean 延迟、有效带宽、达成率
+  - 理论字节/FLOP/计算强度（公式见 ops_harness.theoretical_*）与 roofline 位置
+  - launch 数与 enqueue 时间（launch-bound 归因；SiLU+Gate 分离 vs 融合）
+  - scan 工作效率：Hillis-Steele O(N log N) vs Blelloch O(N) 的实测延迟差
+  - transpose bank conflict：tiled_unpadded vs tiled_padded 实测差
+out_of_scope:
+  - FP16/BF16 路径（第 05 期口径）
+  - 多 block scan（跨 block 前缀传播）与 cooperative groups（注记形式讨论）
+  - online softmax 的 Kernel 实现（纸面推导写入 EXPERIMENT_LOG，Kernel 用片上两阶段）
+  - 算子注册进框架 dispatch（第 04 期）
+  - varlen attention cu_seqlens 端到端（应用注记形式讨论）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 + 1×MTT S4000
+  correctness_profile: 9 Shape × 5 算子 × 全变体
+  common_benchmark_profile: 同上 9 Shape，FP32
+  musa_policy: 逐文件迁移（ops_kernels.mu ↔ ops_kernels.cu），差异集中在编译器/启动库
+gpu_plan:
+  cpu: 真值、fixtures、手算例、边界行为（本地 WSL2 即可）
+  one_gpu_cuda: 4090 构建 + 冒烟 + 9 Shape 全变体基准
+  one_gpu_musa: S4000 同构迁移构建 + 冒烟 + 9 Shape 全变体基准

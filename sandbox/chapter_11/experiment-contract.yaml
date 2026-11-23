@@ -1,0 +1,34 @@
+chapter: "11"
+title: 空闲会话回收
+status: implemented
+question: |
+  空闲会话怎样回收？
+hypothesis: |
+  到达 TTL 后释放容器并保留工作区，后续命令透明重建容器，
+  文件状态连续（丢失率 0）、后台进程不恢复；常驻组的空闲内存成本（MiB·s）
+  随时间线性累积而释放组不累积。若文件丢失或进程被"恢复"，则假设不成立。
+baseline: |
+  空闲会话始终常驻（TTL 极大，容器不释放）。
+variable: |
+  到期释放：idle>TTL → 删除容器、保留工作区、state=released；
+  下次 exec 自动重建容器（挂同一工作区），记录恢复耗时。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  会话语义: per-session、tree 取消、loose 配额、buffer 输出（不变）
+  ttl: 释放组 1.5s；常驻组 10^9 ms
+correctness_checks:
+  - 常驻组：idle 超过 1.5s 后容器仍在（TTL 不生效）
+  - 释放组：到期容器消失、工作区仍在、state=released
+  - 文件状态连续：写→到期释放→重建后读，内容一致（10 次重复丢失率 0）
+  - 后台进程不恢复：nc 服务到期释放后，重建容器内无该进程、端口不通
+  - 重建对客户端透明：released 会话 exec 直接成功
+performance_metrics:
+  - 恢复延迟：released 会话下次 exec 总时长 vs 常驻会话同时长命令（差值=重建成本），重复 10 次 P50/P95
+  - 空闲成本：4s 观察窗内 docker stats 采样积分（MiB·s）：常驻 vs 释放
+fault_injection:
+  - TTL 到期（后台进程正在运行时）
+exclusions:
+  - 不做进程/内存快照恢复（microVM 快照是第 14 期的可选延伸）
+  - "重新创建文件工作区"不称为完整进程恢复（如实表述）
+known_risks:
+  - stats 采样频率 0.5s，MiB·s 为近似积分

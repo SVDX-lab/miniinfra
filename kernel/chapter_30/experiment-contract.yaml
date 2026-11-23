@@ -1,0 +1,58 @@
+# 第 30 期实验合同：代际边界与 2026 新结构扫描（全课程收官期）
+question: >
+  算子性能由硬件代际定义、新结构由模型代际定义——这一对命题能否用本课程 25 期实测
+  证据 + 一次 4090 代际边界实证（FA4 加载尝试 + 同形状 SDPA 对照）+ 生态/新结构两张
+  汇总表收拢？"拿到一个新模型结构"的处理流程能否从第 24–28 期的实际执行过程中
+  提炼为可复用 checklist？
+hypothesis: >
+  (1) FA 三代际各解决一层瓶颈：FA2 删 S² 物化流量（ch21 实测物化代价 +28~37%）、
+  FA3 把"供给与分工"升级到 TMA/warp specialization（ch20 实测 cp.async 阶梯 1.409×、
+  warpspec 在 4B cp.async 时代 0.47-0.75× 负优化——分工必须与搬运粒度同时升级）、
+  FA4 把 matmul 与非 matmul 工作最大化重叠（ch19+ch20 实测"计算×供给"正交可叠加
+  2.02××1.548×=3.10×）；(2) FA4 依托 Blackwell 新指令，在 Ada sm_89 上以架构门控/
+  内核缺失不可加载——4090 上可复现记录；(3) 同形状下 cuDNN/Triton 路径（SDPA
+  cudnn/flash 后端）在 4090 可用，达到 ch21 锚点量级（148 TF = 86% FP16 峰值）。
+baseline: >
+  ch21 §7.3 SDPA 分母（S=8192 B=4 H=16 D=128 fp16 causal = 1.1 TFLOP / 7.46ms =
+  148 TF = 86% FP16 峰值，torch 2.12.1+cu130 实测）；本期在同形状复测并逐后端
+  （FLASH/CUDNN/EFFICIENT/MATH）分解，版本差异（ep24 已将 torch 升级到 2.14）如实记录。
+variant: >
+  本期为"纸面 + CUDA 小实验"期（大纲行 1160-1172），无手写 kernel 与跨后端迁移。
+  实测变体 = 四条代际边界证据通道：(A) 独立 flash-attn 包 wheel 可得性 + import +
+  FA4 路径调用尝试；(B) 官方 sdist 源码考古（不编译）——FA4 架构门控与预编译 arch
+  列表；(C) 已装栈（vllm 0.34.0 / flashinfer 0.7.3，ep24 装机）源码门控扫描；
+  (D) torch SDPA 逐后端同形状对照。生态行冒烟变体 = flash-attn/liger-kernel/
+  sageattention/flashinfer/eplb/flaggems 六项 pip-wheel 可用即验证。
+single_variable: >
+  代际（硬件架构）与后端实现（同一 attention 语义的 flash/cudnn/efficient/math 路径）；
+  形状、dtype、causal、seed 全部同一份（ch21 分母锚点形状）。
+invariants:
+  config: 沿用 ch21 合同口径（Qwen3-0.6B 维度），本期不重复生成 fixtures——
+    复用 ch21 已冻结锚点做对照，新测量只涉及厂商核（无自写核需要真值）
+  anchor_shape: S=8192 B=4 HQ=16 HKV=16 D=128 fp16 causal（ch21 §7.3 SDPA 分母形状）
+  anchor_small: S=2048 B=4 同维度（ch21 §7.3 第二行）
+  seed: 3131（固定，torch.Generator("cuda")）
+  timing: cudaEvent 事件对 P50/P95，warmup 5 次 + 20 次测量，末尾 synchronize
+  flops_convention: causal 口径 FLOPs = 2×B×HQ×S²×D（= 满阵 4×/2，与 ch21 148 TF
+    分母同口径）；非 causal 单独标注
+  peak_denominator: ch02 实测（4090 FP16 171.63 TF / 拷贝 918.8 GB/s）——不重复测量
+  version_note: 服务器 torch 栈被 ep24 pip install vllm 连带升级（2.12.1+cu130 →
+    2.14.0、triton 3.7.1 → 3.8.0），本期全部数字以实验时刻 environment 快照为准，
+    与 ch21 锚点对比时标注版本差异
+  info_date: 2026-11-22（生态与新结构的公开信息时点；大纲 §5.2/5.4 为 2026-11-20）
+out_of_scope:
+  - 手写 FA4（Blackwell 硬件不可得——番外候选）；手写 FA3（Hopper 不可得）
+  - TMA/WGMMA/tcgen05 内核级实验（归番外；本期只做纸面衔接与 ch20 关系表述）
+  - DeepEP/DualPipe/DeepGEMM/FlashMLA 实机（需 Hopper/NVLink/IB 多卡拓扑——纸面标注）
+  - Unsloth 训练侧端到端（超出算子课程边界，纸面标注）
+  - MUSA 列（大纲本期实验清单无 MUSA 项；第 19/20 期已完成 MUSA 侧对应实测）
+correctness:
+  - SDPA 各后端 vs FP32 数学参考 softmax(QK^T/sqrt(D))V（fp32 计算后转回 half 比较，
+    max/mean abs + cosine + NaN/Inf 计数——ch01 比较口径的 attention 版）
+  - sageattention（INT8 量化路径）vs SDPA 输出对照（量化误差单独归因，不与实现误差混合——ch16 口径）
+  - liger RMSNorm vs 手写参考公式（含 1+weight 语义，HF RMSNorm 口径）
+acceptance_questions:
+  - 大纲行 1172："拿到一个新模型结构，先看哪些算子需求、怎样在一天内建立第一个
+    naive 基线"——用第 24-28 期实际执行过程（config 出处→CPU 真值→kernel_sim→
+    CUDA/MUSA→对照）作证据，流程 checklist 化回答（EXPERIMENT_LOG §8）
+platform_scope: 纯纸面 + CUDA 4090 小实验（无 MUSA 列、无 CPU 列新代码——真值锚点复用 ch21）

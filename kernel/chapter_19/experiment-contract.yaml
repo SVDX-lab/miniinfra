@@ -1,0 +1,51 @@
+question: 把第 17 期 tiled GEMM 的"数据供给组织"从同步 load 逐级换成 cp.async 单缓冲、cp.async 双缓冲（扩展：16B 向量化、warp specialization、与第 18 期 WMMA 组合），三级组织在同 tile 同形状下的延迟/达成率阶梯如何变化？收益的 shape/K 深度交叉点在哪里？racecheck 对流水版共享内存说什么？MUSA 侧有没有对应异步拷贝机制（大纲"待实机确认"项的实机答案）？
+hypothesis:
+  - cp.async 单缓冲（level b）相对同步 load（level a）的收益来自"绕过寄存器文件 + 单指令批量等待"——数据不进寄存器、等待从逐元素退化为 wait_group 一条指令；
+  - cp.async 双缓冲（level c）额外省的是"第 i+1 块搬运时间"——原来第 i+1 步开头必须干等搬运，现在搬运与第 i 步计算 overlap；收益上界 ≈ 搬运时间/总时间，随 tile 增大/K 深度加深而增大，随矩阵变小（占用率不足、步数少）反噬（预取的额外寄存器/屏障开销）；
+  - shape 交叉点：tile 面积 × K 深度决定搬运/计算比——小 tile 高占用率时搬运占比小、流水收益小；大 tile 低占用率时搬运占比大、双缓冲收益大；K=8（单步）时双缓冲无 overlap 可做，纯开销；
+  - racecheck：结构正确的单/双缓冲应 0 errors（cp.async 写 + wait_group + __syncthreads 的可见性链完整）；去尾屏障的 broken 版是 WAR 竞态阳性对照——racecheck 若不跟踪 cp.async 写则 broken-async 沉默而 broken-sync 报告（工具能力边界的发现）；
+  - MUSA 侧：cp.async 是 CUDA sm_80 指令，mcc/mp_22 的对应物未知（大纲"待实机确认"）——探测矩阵（头 grep / cvta / 4B / 16B / intrinsics）给出编译级+运行级证据，结论非"有无"二元，而是"哪一层可用"；
+  - 与第 18 期组合：Tensor Core（计算升级）与流水（供给升级）正交——wmma_pipe 相对 ep19 同步 WMMA 的增量即"供给升级在计算升级之上的叠加收益"。
+baseline: 同会话 sync 级（= 第 17 期 gemm_tiled_kernel 逐字复用，FP32 主线 32x32x8_reg4x4 = ep18 最优 16.64 TF/20.2% 规格）+ 第 17 期记录（tile_scan_fp32，直接引用不重测）+ 第 18 期 wmma_scan 记录（组合核对照锚点）+ torch.matmul 厂商库标尺 + ch02 实测峰值分母（拷贝 918.8/711.28 GB/s）。
+variant: 同一份 GEMM 语义在两平台的供给组织变体：CUDA 8 类 kernel（sync/cpasync1/cpasync2/cpasync2v16/warpspec/wmma_pipe/两个 broken 竞态演示核）；MUSA 同源迁移（sync 必有，cp.async 系由探测结果决定编译）。
+single_variable: 数据供给组织（kernel 级别），tile/REG/形状/计时口径全部与 ep18 固定。
+invariants:
+  truth_dtype: FP32（CPU naive rows，k 升序累加，确定性；fixtures 与第 17 期单源复用，SHA256 已对拍）
+  performance_dtype: FP32 主线（scalar 三级）；wmma_pipe 为 FP16 输入 + FP32 累加（ep19 口径）
+  gemm_semantics: C[M,N] = A[M,K]·B[K,N]，行主序，无转置预变换，EPI=0（无 epilogue）
+  smem_layout: sync/cpasync1/cpasync2/warpspec 用第 17 期 +1 padding 布局（bank 行为不变，只换 load 通道）；cpasync2v16 用 +4 padding（16B 对齐，附带 bank 扫描）；wmma_pipe 用 ep19 的 +8 half padding
+  cp_async_path: 快路仅当 M/N/K 全为 tile 倍数；ragged 回退第 17 期同步 guard 路径（基准形状 {256,512,1024}³ 全整除恒走快路）
+  fixtures: 复用 chapter_17/fixtures/correctness.npz（npz_sha256=21dd1030…196bfc，PROVENANCE.json 在档）
+  correctness_shapes: [4x8x4, 13x17x11, 64³, 128³, 200³, 256³, 512³, 1024³]
+  benchmark_shapes: 方阵 {256,512,1024} 主阶梯 + {64,128,256,512} 形状交叉 + 256²×k{8,64,256,1024} K 深度交叉
+  tile_configs: 8 个（ep18 的 16x16x16/32x32x8/32x64x8/64x32x8/64x64x8 × reg2x2/reg4x4 子集）
+  timing: GPU=二进制内部事件对（warmup 后逐样本 record→launch→record，末尾一次同步）；厂商库=OperatorTimer 事件对；报告 P50/P95/min/mean + 全样本
+  warmup_repeats: warmup=10；repeats 300/200/100/50/30（按 shape 递减，与 ep18 策略衔接）
+  peaks_denominator: 规格（1008/768 GB/s、FP32 82.6/25.0 TF）为主口径；ch02 实测（918.8/711.28、55.6/12.53 TF）为对账口径
+  musa_static_smem_budget: 28,672B（台账 M-43）——本期最大双缓冲 8,768B，余量充足（smoke_test 锁定）
+out_of_scope:
+  - mbarrier/cuda::barrier 异步栅栏、TMA（cp.async.bulk）、WGMMA/tcgen05（第 30 期代际梳理）
+  - FP16 scalar 三级（本期只做 FP32 主线；FP16 仅进 wmma_pipe 组合核）
+  - 多级（>2）流水、K-major A/B 双缓冲分离策略、swizzle 布局
+  - epilogue 融合变体（ep18 已覆盖，与本变量正交）
+correctness:
+  - 自检（selftest）：host 三重循环 vs 5 类 scalar kernel × 8 配置 × 4 形状（含 17x19x13 ragged 强制回退路径）+ wmma_pipe 设备内 FP16 对照（容差 0.35/6%）
+  - fixtures 链：sync/cpasync1/cpasync2 × 3 配置 × 8 形状 FP32 + v16/warpspec 子集 + wmma_pipe FP16（容差单独记录）
+  - 确定性：512³ cpasync2 连续 3 次位级一致（无原子、固定累加序）
+  - broken 竞态演示核：不进 pass/fail，记录对真值的当场偏离 + racecheck 报告形态
+  - fixtures 无 CPU 实现漂移：provenance 记录 ch18 单源与 SHA256
+metrics:
+  - 三级阶梯 P50/P95/min 延迟、TFLOPS、达成率（规格 + measured 对账）
+  - 增量归因：同会话 sync 基线的 cpasync1/cpasync2 speedup（流水收益）+ 与 ep18 记录比值（跨期一致性互证，tiling 收益不重复记账）
+  - shape/K 深度交叉曲线（speedup vs steps、vs 矩阵面积）
+  - 寄存器/片上占用（--resource-usage 编译日志 + gpuFuncGetAttributes attrs）——流水版 bookkeeping 寄存器开销
+  - racecheck 报告形态（sync/cpasync1/cpasync2 干净集 + 两个 broken 阳性对照）
+  - 编译时间
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  correctness_profile: fixtures 全部 8 形状 × 5 类 kernel × 3 配置（FP32）+ wmma_pipe FP16
+  common_benchmark_profile: 方阵 {256,512,1024} 主阶梯 + {64,128,256,512} 交叉 + 256²×k{8,64,256,1024}，同 warmup/repeats
+gpu_plan:
+  cpu: 真值链自洽（本地 venv，无 GPU）；无 CPU 性能列（期首声明）
+  one_gpu_cuda: nvcc sm_89 构建（--resource-usage）+ selftest + fixtures 正确性 + E1-E6 基准 + racecheck 体检（sanitizer 包裹，5 run）
+  one_gpu_musa: async_probe 四级探测（P0 grep / P1 cvta / P2 4B / P3 16B / P4 intrinsics，全部留证）→ 探测驱动构建（cp.async 系或有或无）→ selftest + fixtures 正确性 + 可用级延迟对照

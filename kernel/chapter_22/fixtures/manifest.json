@@ -1,0 +1,50 @@
+{
+  "schema_version": "kernel-chapter23.fixtures.v1",
+  "seed_base": 20261123,
+  "rng": "numpy PCG64 standard_normal（q/k 输入）；cache 表 = FP64 公式直算",
+  "rope_params": {
+    "theta": 1000000.0,
+    "head_dim": 128,
+    "hq": 16,
+    "hkv": 8,
+    "layout": "compact cos/sin 各 [max_seq, 64]；HF duplicated 可 expand_dup 无损展开"
+  },
+  "tensors": {
+    "q_seq1": "f5f9609356b9142bcc514c05db81d82367f72823f92a5f39ce64ecb1c631e472",
+    "k_seq1": "ad1fbceaa4c37070008e3a459657749a6dde5c1dc7a8a16840462518fe8eadbe",
+    "q_seq64": "a962ecaa956f60646e2f4eb3a4ae6d23d56a7a31d7aaa26cb6e8d21be44934e9",
+    "k_seq64": "a3e4d814239de81e3a1b4b6af6798374506f72f1821d630bc97dc069fe31585a",
+    "q_seq512": "7a9377f33a918c1794288ba43aa26d5a19c0d306ddd01d2b6796b42a444ee0df",
+    "k_seq512": "245994845b2c1fe951c4783441e96188a7c806b43f0c11a76e1342fac1cec66b",
+    "q_seq2048": "612abb2b77c0110345bec7541ae8ccdf7f5df2a1ce90014a498f05cf88259bcd",
+    "k_seq2048": "9d3f8944e6e00d67220ab1f404a2059d0df3a1853cc866027cf4d0da02d60027",
+    "cache_cos_fp64": "709aef808e1529592bd96a93fa07f1e7de20bc4fab6a67ff4e4296402da4ca58",
+    "cache_sin_fp64": "02dcccfa0a6ccb2c263f46e825e33964cac0e77f432e055d5800322f86dcbd4b"
+  },
+  "regen_32768": {
+    "method": "np.random.default_rng(20261123+32768).standard_normal, fp32",
+    "checksum_q_f64": 124.68705332499485,
+    "checksum_k_f64": 49.109258960408624,
+    "note": "抽样步长 4096 的 float64 顺序和（现场再生后应逐位一致）"
+  },
+  "mu_hash_demo": {
+    "algorithm": "x = idx*0x9E3779B9 ^ seed; x ^= x>>16; x *= 0x85EBCA6B; x ^= x>>13; x *= 0xC2B2AE35; x ^= x>>16; val = (x%20001)/10000-1",
+    "seeds": {
+      "q": "0x23002301",
+      "k": "0x23002302"
+    },
+    "length": 1000,
+    "checksum_q_f64": 0.025500000000021616,
+    "checksum_k_f64": 9.611299999999988,
+    "note": "二进制侧 double 顺序和对拍容差 1e-9"
+  },
+  "environment": {
+    "schema_version": "kernel-chapter23.v1",
+    "created_at_utc": "2026-11-21T06:21:09.355861+00:00",
+    "git_revision": "unknown",
+    "python": "3.12.3",
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "torch": "2.6.0+cpu",
+    "device_type": "cpu"
+  }
+}

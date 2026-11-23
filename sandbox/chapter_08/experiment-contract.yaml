@@ -1,0 +1,34 @@
+chapter: "08"
+title: 输出与回压
+status: implemented
+question: |
+  大量输出如何不拖垮服务？
+hypothesis: |
+  进程内缓冲全量输出会让服务内存随输出规模增长、响应体巨大；
+  流式限额（磁盘有界 spool + 头尾保留 + 截断标记 + 持续排水防管道阻塞）
+  在同样负载下内存近似恒定、退出码仍完整。若限额组内存同样增长或退出码丢失，则假设不成立。
+baseline: |
+  进程内缓冲：Popen.communicate() 全量进内存，响应带完整 base64。
+variable: |
+  流式限额：增量排水 stdout/stderr；保留头 512KiB + 尾 512KiB；
+  total_bytes 全量计数；truncated 标记；负载总字节由外层固定（32/64MiB 定长负载）。
+fixed:
+  image: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  会话模式: per-session + tree 取消 + loose 配额（不变）
+  外层负载上限: 定长 32MiB / 64MiB（yes|head -c 构造，确定性字节数）
+correctness_checks:
+  - 小输出（KB 级）两种模式内容完全一致（回归）
+  - 洪泛 32MiB：buffer 组 stdout_bytes=全量；stream 组 kept≤1MiB、total=全量、truncated=true
+  - 截断语义：stream 组保留头+尾可拼接核对，退出码两种模式一致可得
+  - 客户端 3s 断开后：命令按自身超时被清理、服务健康、无进程残留
+performance_metrics:
+  - 服务进程 RSS 峰值增量（洪泛期间 50ms 采样）：buffer vs stream
+  - 响应体大小：buffer（全量 b64）vs stream（≤~1.4MiB）
+fault_injection:
+  - 64MiB 洪泛
+  - 客户端断开（读超时 3s，负载持续 ~32s）
+exclusions:
+  - 不做跨进程 chunked HTTP 流式协议（教学聚焦内存上界与截断语义）
+  - 不做磁盘 spool 的持久化查询
+known_risks:
+  - in-process 测 RSS 包含测试进程基线，用增量对比；绝对值仅适用本机

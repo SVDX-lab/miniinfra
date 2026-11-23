@@ -1,0 +1,39 @@
+# 实验合同：第 23 期引擎列（vllm-musa / 官方 vLLM 待补）
+# 本期为引擎对比期：无自研 kernel，合同约束的是"引擎口径测量协议"。
+schema_version: kernel-chapter24.contract.v1
+episode: 24
+title: 融合算子接入 vLLM/SGLang 与 vllm-musa——引擎会稀释多少收益
+date: 2026-11-21
+platforms:
+  musa:
+    server: MTT S4000 48G (connect.sha1.seetacloud.com)
+    engine: vllm-musa（0.29.1.dev0 musa 自编译版，dist-packages 安装，版本锁定见 env-probe）
+    model: chapter_01/models/qwen3-0.6b（本地权重路径直指）
+  cuda:
+    server: RTX 4090 24G（抢修中，PENDING）
+    engine: 官方 vLLM 发行版（版本待锁定）
+inputs:
+  prompt_token_ids: chapter_01/truth/truth-manifest.json（20 token，chat template 后）
+  greedy_truth: chapter_01/truth/truth-manifest.json（27 token 含 EOS）
+  padding_prompts: truth 内容 token 循环填充至 200/2000（确定性，engine24_common.build_prompts）
+sampling:
+  temperature: 0.0  # greedy-vs-greedy 对拍
+  ignore_eos: true  # 仅测量矩阵；truth 对拍允许 EOS 收尾
+measurement_protocol:
+  TTFT: t(max_tokens=1) 墙钟，repeats=3 取 P50（两跑差分法，同 vLLM benchmark_overhead）
+  TPOT: (t(max_tokens=N) - t(max_tokens=1)) / (N-1)
+  throughput: batch*N / t(max_tokens=N)
+  peak_mem: 加速器 allocator 高水位（每配置 reset_peak 后专用一跑）
+  wall_clock: perf_counter，generate() 同步返回口径
+correctness:
+  engine_vs_ch01_truth: greedy id 序列前缀匹配 + 全序列一致位（允许引擎实现差异，记录即可）
+comparisons:
+  handwritten_baseline: chapter_04/（微基准 6.5-7.0x、prefill 1.251x、decode 1.199x、op 占比 4.2%/23.6%）
+  graph_baseline: chapter_09/（MUSA decode eager 48.63ms → graph_fused 25.45ms）
+  attention_paged_rope: chapter_20/22/23（算子序列定位对照）
+outputs:
+  - results/env-probe-musa.json          # 版本耦合 + 注册机制证据
+  - results/engine-truth-run-musa.json   # 真值对拍
+  - results/engine-matrix-musa.json      # 12 配置测量矩阵
+  - results/engine-profile-musa.json     # decode 算子序列 + RMSNorm 占比
+acceptance_question: 大纲行 1047——微基准收益在真实引擎的调度、批处理与 KV 管理之下还剩多少、被什么稀释

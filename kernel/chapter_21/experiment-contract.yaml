@@ -1,0 +1,102 @@
+# 第 21 期实验合同：KV Cache 组织与 PagedAttention（V4 新增期）
+question: >
+  KV Cache 的布局选择（连续 vs 分页块表）——PagedAttention 不是算子优化而是
+  数据结构选择：分页的值透明性（同一逻辑 KV 下 paged 与连续布局输出位级一致）
+  能否被三平台实测确认？连续分配在真实变长负载下怎么碎片化（可服务请求数差异
+  与碎片率）？paged gather 的间接寻址代价怎么量化（块表查找 vs 局部性 vs 占用
+  率归因分层）？GQA 下 KV 字节核算与 48GB/24GB 两卡可服务容量对照？
+hypothesis: >
+  1) 值透明性：块表只改地址不改值与求和序 → paged kernel 与连续 kernel 输出
+  位级一致（fp32 片上 + 同一归约序；fp16 io 舍入仅发生在写回）。2) 碎片：静态
+  连续预留（pre-vLLM 式 [batch, max_ctx]）在变长混合负载下利用率 ~25% 或直接
+  装不下（64 请求 ×8192 预留 = 60.1GB > 48GB S4000）；malloc 式精确连续死于
+  外部碎片（总空闲够但最大连续段不够）；分页只付尾部部分块的内部浪费
+  （~bs/2 token/请求）。3) gather 代价：间接寻址理论上不加 DRAM 唯一字节
+  （块表 int32 ~KB 级、行内 D 连续保 coalescing）——实测代价全部表现为带宽
+  达成率下降，且随机表（bs×D=32KB 粒度打散）劣于恒等表。
+baseline: >
+  CPU FP32 参考（连续布局教科书链 + 分页 gather/散布对 + FP64 锚点）；
+  CUDA 连续布局 decode/prefill kernel（同核去块表化控制组，prefill 侧 = ch21
+  gqa_prefill_kernel 原样）。
+variant: >
+  (a) paged_decode_kernel<T,WARP>：单 query + 块表寻址（token t → tb=t/bs,
+  ot=t%bs, p=table[b,tb]），per-request seq_lens（引擎口径）；(b)
+  contig_decode_kernel：同体去表；(c) paged_prefill_kernel：ch21 prefill 结构
+  （tile BR=16 + online softmax + causal early-termination）+ K/V 行表寻址；
+  (d) contig_prefill_kernel（ch21 原样）；(e) gather_kv_kernel（纯 gather 归因
+  层）。warpSize-generic（32/128 双实例 + 设备探针，M-11/M-20）。
+single_variable: KV 组织（连续 vs 分页；表序 vs 表随机），语义、维度、scale、
+  数据全部同一份（Qwen3-0.6B 维度合成数据；值透明性使布局成为唯一变量）。
+invariants:
+  config: Qwen3-0.6B 官方口径（与 ch21 同源）：HQ=16 / HKV=8 / D=128 / 28 层
+  gqa_map: q 头 h → kv 头 h//2（HF repeat_interleave）
+  softmax_scale: 0.08838834764831845   # 1/sqrt(128)
+  块表语义合同（大纲 §8 条目显式化；paged_config.py 模块头为单源）:
+    pool: "[num_blocks, HKV, block_size, D]（K/V 两池同构；物理块 p 的
+      (kv头 g, 块内偏移 o) 行 D 维连续）"
+    block_table: "[B, max_blocks] int32；有效区间 [0, ceil(seq_len_b/bs))，
+      padding 合同值 -1，kernel 不读取"
+    token_mapping: "t → tb=t//bs, ot=t%bs, p=table[b,tb]；
+      逻辑 K[b,g,t,:] == k_pool[p,g,ot,:]"
+    identity_table: "B=1 时 p==t（分页与连续严格同构）；B>1 退化为请求独占
+      连续段（物理块跨请求不得重叠）"
+    boundary_group: "空块（-1 padding）/ 部分块（n%bs∈{1..bs-1}）/ 恰整块 /
+      bs=1 退化（smoke）"
+    error_behavior: "越界 / 有效区 -1 / 请求内外重复块 / 表长不足 / n=0 /
+      非合同 dtype → 显式报错不静默（host 预检入口 validate_tables）"
+  correctness_shapes: fixtures 锚点 decode N {65,128,511} × B {1,4} × bs
+    {16,128} × {identity,rand} + 变长 batch [1,17,255,511]@bs=32 + prefill
+    S {130,512}；大形状 N {2048,8191} 运行期同 seed 规则生成（manifest 记
+    预期 SHA256）；边界族 {1,bs-1,bs,bs+1,3bs-1,3bs}（smoke）
+  benchmark_shapes: decode N {512, 2048, 8192} × B {1,4,16} × {contig,
+    paged-seq, paged-rand} × fp16（fp32 抽查 N=2048）+ gather-only +
+    prefill S {512,2048} B=1
+  timing: ch01 OperatorTimer 事件对逐样本、末尾一次同步，P50/P95；MUSA 列
+    事件对同口径（binary 内 gpuEvent）
+  kernel_params: BC=128 / BR=16 / THREADS=128 / D=128 编译期固定；bs 运行期
+  smem_budget: decode 3072B / prefill fp16 20672B / fp32 24768B
+    （MUSA 静态上限 28672B 内——M-43 约束，stub 编译期 static_assert 锁定）
+  platform_peaks_denominator: chapter_01/performance 实测（4090 拷贝 918.8 GB/s；
+    S4000 711.28；L2 72MB/24MB）——不重复测量
+  fragmentation_workload: 32 请求 × final~U[8,2048] × initial~U[8,64] ×
+    到达均匀排序，seed=20261122；容量口径 = 全局 KV token 预算
+out_of_scope:
+  - 完整 FlashAttention / split-K flash-decoding（归算子篇；ch21/ch25 已覆盖）
+  - vLLM 级工程特性（copy-on-write 前缀共享、 eviction/swap、优先级调度）
+  - RoPE（第 22 期）、QKV 投影（第 17 期）、引擎集成（第 23 期衔接注记除外）
+correctness:
+  - 值透明性位级断言：paged kernel/参考 vs 连续布局 kernel/参考（fp32/fp16
+    全矩阵）——合同核心断言
+  - fixtures truth32 容差档（fp32 ≤5e-4 / fp16 ≤2e-2）+ truth64 锚点（N ≤128）
+  - gather kernel vs 逻辑 K/V 位级（纯拷贝）
+  - 变长 batch（per-request seq_lens，引擎口径）+ padding -1 零读取
+  - 合同校验显式报错路径（CPU 参考 + CUDA validate_tables）
+  - kernel_sim grid/块表覆盖断言（token 精确一次、padding 零触碰、尾部边界
+    族 × bs {16,64,128}、双 warp_size 归约树一致）——ep26/ep21 教训制度化
+  - 确定性 3 次位级
+metrics:
+  - 碎片率：ext_fragmentation = 1 − largest_free_span/total_free（分页构造性 0）
+  - 内部浪费：预留−实际（连续预留）/ blocks×bs−实际（分页）；搬迁拷贝 token 数
+  - 可服务请求数（served）：四方案 × 三档容量 + 容量扫描 10 档
+  - paged vs 连续 kernel：延迟差 / 有效带宽差（bytes_unique/P50 ÷ 918.8）
+    双口径（nsys kernsum + 带宽对账）× {contig, 恒等表, 随机表} 归因分层
+  - KV 字节核算：4096 B/层（×28 = 112 KB/Token）；48GB/24GB 容量对照
+    （serveable tokens、batch 均分上下文、预留浪费、块表开销占比）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB + 1×MTT S4000 48GB
+  musa_plan: standalone binary（ch18/ch21 模式）共享 paged_kernels.cuh；
+    S4000 主机失联期迁移版代码 + run_session.sh 就绪（MUSA_PENDING.md），
+    恢复后一键补齐（预期路径：USE_MUSA 入口宏 / musa_fp16.h / musa* shim /
+    smem 已按 28,672B 预算）
+gpu_plan:
+  cpu: FP64/FP32 真值、fixtures、kernel_sim、记账模拟、容量核算（本地完成）
+  one_gpu_cuda: build + smoke + correctness（fixtures + 运行期大形状）+
+    benchmark 全扫描 + nsys 三 profile（B=16 / B=1 / gather+prefill）
+  one_gpu_musa: mcc build（回退链）+ attrs + selftest + correctness 37 case +
+    bench 矩阵（run_session.sh 一键）
+structural_diff_declaration: >
+  (1) 合成激活替代真实推理激活；(2) 每请求同长 N 的 decode 矩阵（变长支持
+  在 correctness/smoke 与 kernel 层均有，bench 用同长保证字节对账干净）；
+  (3) kernel 不做 QKV 投影与 RoPE；(4) prefill 假设 K/V 序列长 = Q 序列长；
+  (5) 表内容校验为 host 预检入口（性能路径内核无逐项 guard——合同显式声明）；
+  (6) bench 计时不含池构造/表构造（构造前置，计时循环只含 kernel）。

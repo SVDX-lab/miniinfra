@@ -1,0 +1,105 @@
+# 第 22 期实验合同：RoPE——旋转位置编码的双形态
+question: >
+  位置信息注入（逐元素旋转）在 prefill（批量 Token）与 decode（单 Token 追加）
+  两种调用形态下延迟/带宽如何分化？cos/sin cache 表该用什么 dtype（FP32 vs
+  FP16 的误差与场景边界在哪）？长序列/大 base 下 cache 的误差如何放大？
+hypothesis: >
+  RoPE 是逐元素算子（每 pair 6 FLOP，AI << 0.1 FLOP/B）：prefill 形态随 token
+  数线性扩展、大形状逼近带宽红线（fp16 io 理想字节 = 2×T×(HQ+HKV)×D×2B +
+  cache 项）；decode 形态工作集仅 6 KB（24 头×128×2B），必然 launch-bound——
+  S4000 事件对地板 ~27-28µs（M-12/M-36）主导，decode 延迟与位置无关。
+  cache dtype：fp16 存储 cos/sin 引入 ~2.4e-4 均匀量化（[-1,1] 区间 ulp/2）；
+  fp32 角度路径的误差随位置线性放大（pos×inv_freq 的 fp32 舍入 ≈ pos·2^-24·freq），
+  pos=32768 时高频维（j=0，freq=1）误差 ~2e-3 > fp16 量化噪声 → 长上下文
+  场景 cache dtype 不是主导项、角度精度才是；短上下文（≤8192）两者均 <5e-4。
+baseline: >
+  CPU FP64 公式直算参考（锚点）+ FP32 路径（cache fp32 + fp32 算术）；
+  HF 语义对照（chapter_01 qwen3_model RotaryEmbedding/rotate_half 语义复刻）。
+variant: >
+  (a) build_cache kernel（compact [max_seq, D/2]，sincos 逐角度，fp32/fp16
+  存储双实例）；(b) rope_prefill kernel（并行维 = T×(HQ+HKV)×D/2，查表）；(c)
+  rope_decode kernel（grid = HQ+HKV 个 block × D/2 线程，单 Token 查一行）；
+  (d) fp16 cache 读路径（__half2float 转换）双实例。io T ∈ {float, half} 模板。
+single_variable: 调用形态（prefill 批量 / decode 单 Token）与 cache 存储精度
+  （fp32/fp16），数学语义、Qwen3 参数（theta=1e6, D=128）、shape 全部同一份。
+invariants:
+  config: Qwen3-0.6B 官方 config.json 实读（S4000 chapter_01/models，
+    2026-11-21T05:52Z；sha256 前缀 660db3b7）
+  config_values:
+    rope_theta: 1000000.0        # 实读值；ch21 attention_config 曾记 10000（未使用，更正记录 KNOWN_ISSUES）
+    head_dim: 128                # 整头旋转：rope_scaling=null、无 partial_rotary_factor
+    num_attention_heads: 16      # HQ
+    num_key_value_heads: 8       # HKV
+    hidden_size: 1024
+    num_hidden_layers: 28
+    max_position_embeddings: 40960
+  rope_semantics: RoPE-NeXt half-split（chapter_01 qwen3_model.py 语义）：
+    inv_freq[j] = 1/theta^(2j/D)；out[j] = x[j]c − x[j+64]s；out[j+64] =
+    x[j+64]c + x[j]s（j ∈ [0,64)）；HF duplicated 表 [seq, 128] 可无损展开
+  cache_layout: compact cos/sin 各一张 [max_seq, 64]（kernel 侧）；HF duplicated
+    视图仅在 HF 语义对照时使用（expand_dup 无损互转）
+  weights: 合成激活（hash-RNG，seed 见 rope_config）为主矩阵；真实权重单层
+    验证用 chapter_01/models/qwen3-0.6b 第 0 层 q_proj/k_proj/q_norm/k_norm +
+    truth/probes.npz embedding 探针（prompt 20 token，与 ch01 真值体系同源）
+  truth_dtype: FP64（CPU 锚点）+ FP32（CPU 真值，fixtures 存档）
+  performance_dtype: FP16 主线 + FP32 对照（io 模板双实例，片上恒 fp32）
+  fixtures_seed_base: 20261123
+  correctness_shapes: seq {1, 64, 512, 2048, 32768} × head_dim=128 ×
+    {fp32, fp16}（任务书矩阵；decode 形态 pos = seq − 1 同矩阵）
+  benchmark_shapes: prefill T {128, 2048, 8192, 32768}；decode pos {0, 2048,
+    32767}；cache 生成 max_seq {2048, 32768, 131072}；形态切换 =
+    prefill(2048)+decode 组合 vs 两者之和
+  timing: 事件对逐样本、末尾一次同步（ch01 OperatorTimer 口径；MUSA binary 内
+    musaEvent 同口径）；decode 另测 back-to-back 发射吞吐（M-12 差分法）
+  kernel_params: D=128/HALF=64 编译期固定；THREADS=128（prefill）/64（decode
+    block）；无归约、无 shared memory、无原子——位级确定
+  io_layout: q [T, HQ, D] / k [T, HKV, D] 行主连续（token 主序）；batch 维
+    折叠进 T（真实引擎 prefill tokens 含 batch；decode 多序列批量需逐 Token
+    位置数组，out_of_scope）
+  platform_peaks_denominator: chapter_01/performance 实测（4090 拷贝 918.8 GB/s；S4000
+    711.28 GB/s；L2 72MB/24MB）——不重复测量
+out_of_scope:
+  - QKV 投影 GEMM（第 17 期）、Attention 本体（第 20 期）、KV 分页（第 21 期）
+  - RoPE 与 Attention 融合（大纲注记归番外；本期只做独立算子）
+  - 多序列 decode 批量（逐 Token 位置数组变体）/ 并行部分旋转 / NTK-YaRN 外推
+  - BF16/FP8 路径（第 05 期口径）
+  - 逐头不同 base（MLA rope 段共享 theta=1e4 口径归第 24 期已测）
+correctness:
+  - CPU FP64 锚点自洽（fp64 vs fp64 位级）与 fp32-vs-fp64 舍入量级分层
+  - HF 语义对照：vendored HF 路径（torch fp32）vs 本期 fp32 路径（compact
+    cache）——同语义双表达，容差 ≤1e-5（inv_freq 幂运算顺序差异 1 ulp 放大）
+  - 正确性矩阵 seq {1,64,512,2048,32768} × {fp32, fp16} 对 FP64 锚点（CPU
+    实现与 GPU 核双侧；MUSA standalone hash-RNG 自含 + CPU fp64 truth）
+  - kernel_sim 覆盖断言（tid→下标除法映射恰一次写、cache 读界、decode q/k
+    块分支）+ 尾部边界 T ∈ {1, 3, 130}
+  - 真实权重单层验证：embedding 探针 → 第 0 层 q/k 投影 + q/k_norm → RoPE
+    （HF torch 参考 vs 本期实现 vs GPU 核 apply 模式，prefill T=20 + decode
+    pos=19 两形态）
+  - 相对位置性质：<R(m)q, R(n)k> 只依赖 m−n（旋转矩阵数值验证，smoke）
+  - 确定性：同输入 3 次位级比对（无原子无归约 → 预期全 True）
+metrics:
+  - 两形态延迟 P50/P95（seq/token 扫描）与理想字节（unique/issued 双口径）
+  - 有效带宽 = 理想字节/P50，对平台拷贝峰值达成率 → bound 分类
+    （decode 预期 launch-bound：实测延迟 >> 字节/带宽下限）
+  - cache 表显存占用（max_seq×64×4B×2 与 fp16 减半）与生成吞吐（一次性成本）
+  - cache dtype 实验：fp32 vs fp16 表误差 + 端到端 q 误差，theta {1e4, 1e6,
+    1e8} × seq {512..32768} 误差放大矩阵
+  - 形态切换开销：prefill+decode 组合 vs 单独之和（发射数 2 的差分）
+migration:
+  target_hardware: 1×NVIDIA RTX 4090 24GB（待修复，CUDA 列待补） + 1×MTT S4000 48GB
+  musa_plan: standalone binary（ch21 模式），共享 rope_kernels.cuh +
+    rope_bench_main.cuh（入口体同构，平台差异仅 shim 块机械替换）；
+    attrs（warpSize 探针，沿用 M-11/M-20 双口径）+ apply 文件模式（真实权重
+    验证桥）
+gpu_plan:
+  cpu: FP64/FP32 真值、fixtures、kernel_sim、HF 对照、CPU 延迟对照（本地 12 核）
+  one_gpu_cuda: build + selftest + correctness 矩阵 + benchmark 矩阵 +
+    cachedtype + apply（真实权重）——【待 4090 修复】
+  one_gpu_musa: mcc build（回退链）+ attrs + selftest + correctness + bench +
+    cachedtype + apply（真实权重单层验证）
+structural_diff_declaration: >
+  (1) 合成激活（hash-RNG）替代真实推理激活，真实权重仅用于单层验证；(2) decode
+  形态固定 B=1 单 Token（引擎多序列批量归 out_of_scope）；(3) 位置为连续整数
+  （seq_offset 起），不支持任意跳变位置数组；(4) 无 flash/fused 变体——RoPE
+  与 Attention 的融合归番外；(5) kernel 头维 D=128 编译期固定（Qwen3 口径），
+  T/HQ/HKV/max_seq/theta 运行期任意（模板按 HQ+HKV 折叠批量）。

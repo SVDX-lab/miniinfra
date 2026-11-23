@@ -1,0 +1,8 @@
+{
+  "schema_version": "kernel-chapter27.fixtures.v1",
+  "files": {
+    "prompts.json": "267e8342a5f2f1cb45195b61a228b4ea3ff61159564968b858cacf0ece06a29a"
+  },
+  "tokenizer_json_sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+  "prompt_count": 8
+}

@@ -1,0 +1,50 @@
+chapter: "04"
+title: 资源配额
+status: implemented
+question: |
+  会话如何限制资源？
+hypothesis: |
+  任务级 cgroup 配额能把 CPU 压缩到额度比例、把内存超限变成可识别的 OOM kill、
+  把进程数压力限制在 pids.max 内，并抑制邻居会话互相干扰；
+  固定宽松额度下这些行为不可控。若配额组与宽松组行为无差异，则假设不成立。
+baseline: |
+  固定宽松额度（第 01 期起的全局约束：256m / 1 cpu / 64 pids）。
+variable: |
+  按任务类型的配额 profile（light/cpu_heavy/mem_heavy/half）。
+  每次扫描只改变一类资源额度；两组都保留绝对上限（≤2 cpu、≤512m、≤64 pids），
+  避免实验负载伤及宿主。SMT 残余干扰的正解为 cpuset 硬分区（受害者独占核）。
+fixed:
+  image_main: alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+  image_python: python:3.12-alpine@sha256:0687a6bc9716edc2a6ee0fbfb0f87e7ee358b262b67c9215de91bc9b2d38ba71
+  会话模式: per-session + tree 取消（第 02/03 期语义不变）
+  拓扑: 6 物理核 ×2 SMT = 12 逻辑核（干扰实验的分区依据）
+quota_profiles:
+  loose:     {memory: 256m, cpus: "1.0", pids: 64}
+  light:     {memory: 64m,  cpus: "0.25", pids: 32}
+  cpu_heavy: {memory: 256m, cpus: "2.0", pids: 64}
+  mem_heavy: {memory: 512m, cpus: "1.0", pids: 64}
+  half:      {memory: 128m, cpus: "0.5", pids: 48}
+workload_manifest:
+  - CPU 固定工作: dd if=/dev/zero bs=1M count=1024 | sha256sum（1 GiB 哈希）
+  - MEM 超限: python 分配 200 MiB 并逐页触碰
+  - MEM 自身失败对照: ulimit -v 下 python 捕获 MemoryError 退出 3
+  - PID 压力: 循环 fork 50 个 sleep 10，统计 fork 失败数
+  - 干扰源: sha256sum /dev/zero（timeout 强杀）
+correctness_checks:
+  - mem 超限（light, 64m）: exec 退出码 137 + cgroup memory.events 的 oom_kill 计数增加
+  - 进程自身失败对照: MemoryError 退出 3，oom_kill 不增加（区分两类失败）
+  - PID 压力（light, 32）: fork 失败 >0；loose(64) 下 fork 失败 =0
+  - light 配额下正常命令可执行
+  - 干扰: 配额共享无法消除 SMT 竞争（宽松燃烧器 >2×alone）；cpuset 硬分区 ≈ alone（正解）
+performance_metrics:
+  - CPU 扫描: 同一 1GiB 工作在 cpus∈{0.25,0.5,1,2} 下的墙钟时间（各 3 次重复）
+  - 邻居干扰四组对照: 受害者独占核（alone）vs 配额共享（宽松/半额燃烧器）vs cpuset 硬分区
+fault_injection:
+  - 内存超限（OOM kill）
+  - fork 耗尽（pids.max）
+exclusions:
+  - 不测 cpu Heaviness 对吞吐收益的"最优配额"（教学只验证约束可生效）
+  - 不测 swap（--memory-swap = memory，禁 swap）
+known_risks:
+  - WSL2 CPU 调度噪声，CPU 扫描比例关系允许 ±20% 偏差
+  - busybox fork 失败的错误文案与退出码依实现而定，以 stderr 证据为准

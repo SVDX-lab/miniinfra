@@ -1,0 +1,48 @@
+# 第 12 期实验合同：多后端 Qwen3 运行时——统一 Backend 抽象与抽象边界
+question: 一个推理程序支持多后端（CPU/CUDA/MUSA）时，抽象边界应该画在哪？哪些抽象是平台无关的（换后端零改动），哪些被迫平台化（每后端一份适配）？"不做静默 CPU fallback"在运行时层如何落地为可验证的行为？
+hypothesis: 模型解析/Tokenizer/采样循环/合同校验可以完全平台无关（同一份 Python 前端三后端复用，零设备分支）；设备探测/同步原语/扩展构建/dispatch key/事件计时是被迫平台化的五部位（CPU 后端全部消失 = 对照证据）。能力查询可以抹平剩余差异：不可用后端显式报错（BackendNotAvailableError）、合同外 dtype/设备显式报错（CapabilityMissingError），三后端同一输入 Greedy 结果与第 01 期 truth 一致、fused==native。遥测可观察性是第三个分化轴：CUDA 双口径（kernel 事件+cudaLaunchKernel+设备时长）、MUSA 单口径（仅 musaLaunchKernel CPU 侧事件、设备时长全 0=M-04 运行时层体现）、CPU 无发射概念（N/A 平台边界）。
+baseline: 第 04 期 ops_router 显式注册表（strict/explicit_fallback/silent 三模式）+ 第 01 期 truth 三层真值 + 第 04 期 TORCH_LIBRARY 注册扩展（CUDA/MUSA 双列，kernel 零改动复用）。
+variant: 同一 Qwen3Runtime 入口 × 三份 Backend 适配（cpu=composite 表达式 / cuda=cpp_extension+TORCH_LIBRARY / musa=musa_extension+PrivateUse1）；fused 开/关两种模式。
+single_variable: Backend 适配层（唯一平台化部位）；前端（runtime 入口 + 模型 + 采样循环）逐字跨后端共用。
+invariants:
+  model: Qwen/Qwen3-0.6B@modelscope:master（chapter_01 同一权重与 truth；权重 SHA256 f47f7117…与 MANIFEST 对账）
+  rms_norm_eps: 1e-6
+  model_dtype: CPU 列 fp32（真值锚点口径）/ GPU 列 fp16（第 01 期公共路径）
+  truth: chapter_01/truth/（probes.npz + truth-manifest.json；本期不生成、只消费——probes 在位时附首 Token Logits 向量级 metrics）
+  fixtures: 本期 capability-probe fixtures（seed=20261113，shape 8×1024，逐张量 SHA256 清单）+ 小模型管线（随机小 config，seed 锁定）
+  prompt_token_ids: 来自 truth-manifest（20 token，"用一句话解释 RMSNorm 的作用。"；tokenizer 跨后端重编码逐位对账 = Tokenizer 平台无关性证据）
+  greedy: max_new_tokens=32（truth 同口径），eos=151645，每步重算整段（无 KV Cache，Backend.greedy_decode 三后端同一份循环）
+  microbench_shapes: rows [1, 20(=seq), 128] × H=1024，OperatorTimer（GPU 事件对 w2 r10 / CPU perf_counter）
+runtime_contract:
+  entry: Qwen3Runtime.create(backend_name) → ensure_available（显式报错点）→ setup（GPU 构建/加载扩展）→ load（tokenizer+权重）→ generate（遥测分离输出）
+  capability_query: query_capabilities() → CapabilityReport（dtype 四项探测 tensor_create/linear/composite_rmsnorm/fused_op × {fp32,fp16,bf16} + 注册路径 + 设备探测 + 同步原语 + 遥测签名）——能力是数据（JSON 可序列化），不是隐式行为
+  op_dispatch:
+    rmsnorm: "三后端同一签名，组合表达式实现（第 01 期 RMSNorm 模块数学；平台无关路径代表）"
+    fused_add_rmsnorm: "CPU=composite 参考实现（第 04 期 fused_add_rmsnorm_ref 逐字）/ CUDA|MUSA=torch.ops.mini_infra_ops.fused_add_rmsnorm（第 04 期注册 TU 逐字，经 MiniInfraOps strict 注册表路由）；签名 op(input, residual, weight, eps) -> None 双 buffer 原地改写"
+    greedy_decode: "Backend 基类实现，三后端共用同一份循环（平台无关）；后端差异只通过 sync() 露出"
+  fallback_policy: "不做静默 CPU fallback 的四道显式闸门：①create_backend 未知名字 ValueError；②ensure_available 不可用 BackendNotAvailableError（错误文本含修复指引）；③strict 注册表未注册设备 RuntimeError（列出已注册集合，第 04 期语义原样）；④fused op 合同外 dtype/设备 CapabilityMissingError。第 04 期 explicit_fallback/silent 两模式保留为对照组（smoke D2/D3）"
+  error_evidence: 一切显式报错的错误类型+原文进 results JSON（平台边界证据链）
+  op_calls_per_forward: "56（28 层×2；layer 0 input_layernorm 保留原生模块 + 终局 op，第 04 期口径；router call_counts 全程留痕）"
+telemetry_contract:
+  per_op: profile_one_forward（torch.profiler，top-12 self CPU 时间 + self device 时间）
+  launch_counts: count_kernel_launches（第 03/04 期已验证实现原样）
+  observability_matrix: "CUDA=kernel 事件+cudaLaunchKernel 双口径+设备时长可观察；MUSA=仅 musaLaunchKernel CPU 侧事件+设备时长全 0（M-04/M-30 的运行时层体现）；CPU=N/A（无设备发射概念，显式平台边界非 0）"
+abstraction_boundary_axes:
+  platform_neutral_candidates: [模型解析(Qwen3Config/load_state_dict), Tokenizer(BPE 编解码/chat 模板), 采样循环(Greedy+eos), 合同校验(shape/dtype/aliasing 语义), 能力协议数据结构, 生成参数与真值对账逻辑]
+  platform_forced_candidates: [设备探测 API, 同步原语, 事件计时 API, 扩展构建系统(cpp_extension vs musa_extension+后缀/单编译单元/流变体), dispatch key 名(CUDA vs PrivateUse1), 遥测 activity 与 launch 事件名, 设备 guard(单卡场景缺席), 流管理(默认流变体)]
+  cross_reference: "与 ch12 兼容分层（L1 机械可替换/L2 需要适配/L3 本质不同）互证——runtime 层预期把 ch12 的构建系统/host 守卫差异全部封进 Backend 适配层"
+metrics:
+  - 实验 1：三后端 encode 对账 + 首 Token Logits 三层口径（SHA256 位级/可移植/向量 metrics）+ Greedy tokens vs truth + fused==native + router 调用计数
+  - 实验 2：能力矩阵（后端 × dtype × 四项探测 + fused op + 注册路径 + 设备探测 + 遥测签名）+ 显式报错用例 E1–E5 错误原文
+  - 实验 3：抽象边界清单（无关/平台化两类，逐项给代码级证据 + ch12 互证条目）
+  - 实验 4：遥测对照（per-op 表 + launch 数 + 设备时长可观察性 claim vs measured）
+  - 实验 5：跨后端对照表 → 迁移台账（新差异则追加，编号续接 M-51）
+migration:
+  target_hardware: 本地 WSL2 CPU + 1×MTT S4000 + 1×RTX 4090（4090 故障抢修中，CUDA 列接口就绪留回填位）
+  migration_mode: "运行时层新代码（backend.py + 三份适配）；kernel/注册 TU/模型/Tokenizer 全部为第 01–04 期已验证实现逐字复用（不发明新 Kernel）"
+  reuse: "ch05 qwen3_model_fused.py / ops_router.py / fused_add_rmsnorm_ref.py；ch01 qwen3_tokenizer.py / truth/；ch05 注册 TU（cuda/musa 两目录逐字）；ch27 safetensors_compat + regex 注入方案"
+acceptance_question: 大纲行 852——"一个推理程序支持多后端时，抽象边界应该画在哪"（用实验 1–4 数据回答）
+gpu_plan:
+  cpu: 本地全列（用户指定执行序：①CPU 列全部本地 → ②MUSA S4000 实机 → ③CUDA 留回填位）
+  one_gpu_musa: tar 上传 → musa_extension 构建（复用 ch05 build.py）→ capability_matrix → compare_correctness（fp16 Greedy vs truth）→ benchmark 遥测（musaLaunchKernel + 设备时长全 0 复核）→ 拉回
+  one_gpu_cuda: 接口就绪（CUDABackend + implementations/cuda 与 ch05 逐字）；4090 恢复后按 musa 同流程执行——CUDA_PENDING.md 列明步骤
